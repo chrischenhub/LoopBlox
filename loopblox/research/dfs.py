@@ -80,7 +80,8 @@ class DFSResearchSession(ResearchSession):
                     instructions='Modify next_parent_id, save with parent_id, then evaluate [parent, child] on '
                                  'the full batch. Scores do not prune descendants. Read parent source and relevant '
                                  'traces. Selection is independent of the exploration frontier. Before finish, '
-                                 'compare your proposed submission against the baseline on a fresh full batch.')
+                                 'compare your proposed submission against the baseline in a new full-batch evaluation '
+                                 'under the same frozen task policy.')
 
     def save(self):
         super().save()

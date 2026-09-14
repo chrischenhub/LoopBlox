@@ -20,7 +20,13 @@ from loopblox.experiments.study import BASELINE_CONTROLLER, model_settings
 from loopblox.benchmarks.tau2 import Tau2Runner, load_suite
 
 
-
+TASK_IDS = (
+    'retail-development-0000',
+    'retail-development-0002',
+    'retail-development-0004',
+    'retail-development-0006',
+    'retail-development-0007',
+)
 
 
 def read(path):
@@ -28,13 +34,15 @@ def read(path):
 
 
 def prepare(args):
+    batch = len(TASK_IDS)
     manifest = load_suite(args.suite)
     if not manifest['tasks'] or any(t['split'] != 'development' for t in manifest['tasks']):
         raise ValueError('Use a development-only suite; this pilot does not run holdout')
-    if args.count < args.top or min(args.top, args.batch, args.deep_runs) < 1:
-        raise ValueError('Require count >= top and positive batch/deep-run budgets')
-    if args.batch > len(manifest['tasks']):
-        raise ValueError('The batch requires more distinct tasks than the development suite contains')
+    if args.count < args.top or min(args.top, args.deep_runs) < 1:
+        raise ValueError('Require count >= top and positive deep-run budgets')
+    missing = set(TASK_IDS) - {task['task_id'] for task in manifest['tasks']}
+    if missing:
+        raise ValueError('The fixed development tasks are missing: ' + ', '.join(sorted(missing)))
     experiment = read(ROOT / 'experiments/tau2.json')
     candidates = generate_candidates(experiment['exposed'], args.count, args.seed)
     client = ChatCompletionsClient.from_env()
@@ -52,12 +60,12 @@ def prepare(args):
         atomic_text(root / source_path, candidate['source'])
         entries.append(dict(name=name, source=source_path, sha256=digest(candidate['source'].encode()),
                             **{key: candidate[key] for key in ('sampling', 'attempt', 'rationale')}))
-    screening_runs = 1 + (args.count + 1) * args.batch
+    screening_runs = 1 + (args.count + 1) * batch
     deep_runs = 2 + args.deep_runs
     protocol = dict(
         model=model_settings(client), user_model=model_settings(user), worker_image=worker,
-        task_limits=vars(limits), task_ids=[t['task_id'] for t in manifest['tasks']],
-        holdout_task_ids=[], experiment=experiment, seed=args.seed, batch=args.batch, top=args.top,
+        task_limits=vars(limits), task_ids=list(TASK_IDS),
+        holdout_task_ids=[], experiment=experiment, seed=args.seed, batch=batch, top=args.top,
         candidates=entries, baseline_sha256=digest(BASELINE_CONTROLLER.read_bytes()),
         suite_manifest_sha256=digest((root / 'suite/manifest.json').read_bytes()),
         implementation_sha256=snapshot_implementation(root),
@@ -70,12 +78,12 @@ def prepare(args):
         ranking='Fully scored candidates: descending passes, ascending model calls, input tokens, '
                 'output tokens, then frozen generation order. Baseline is a separate reference.',
         design='Ten (or configured count) source-frozen random candidates share a complete development batch '
-               'with the unified baseline. Each evaluation samples distinct tasks uniformly without replacement; '
-               'separate evaluations may reuse tasks. An opening baseline trial is charged separately. '
+               'with the unified baseline. Every comparison uses the same fixed task_ids in their frozen order, '
+               'once per candidate. The opening baseline trial uses the first task and is charged separately. '
                'The top candidates start fresh, serial researchers with equal budgets and source-only inheritance. '
                'Each branch has its own baseline/start opening pair, then the specified additional development '
                'allowance. Screening evidence is not exported as completed research experience. '
-               'No validation or holdout is run, and branch scores from different batches do not establish a final winner.')
+               'No validation or holdout is run; separate branch runs do not establish a final paired winner.')
     atomic_json(root / 'protocol.json', protocol)
     atomic_json(root / 'result.json', dict(status='prepared', branches=[], top=[]))
     report(root)
@@ -86,22 +94,24 @@ def prepare(args):
 
 def prepare_dfs(args):
     """Start a new study from completed Top 3 submissions without rerunning screening."""
+    batch = len(TASK_IDS)
     source, root = Path(args.name).resolve(), args.output.resolve()
     old, previous = read(source / 'protocol.json'), read(source / 'result.json')
     if (not previous.get('branches') or any(item['status'] != 'complete' for item in previous['branches'])
-            or args.nodes < 1 or args.depth < 1 or args.batch < 1):
+            or args.nodes < 1 or args.depth < 1):
         raise ValueError('DFS requires completed starting branches and positive node/depth limits')
     if root.is_relative_to(source):
         raise ValueError('New DFS study must be outside the historical campaign')
-    client, user = clients(old)
-    worker = image_id(old['worker_image'])
     manifest = load_suite(source / 'suite')
     if any(task['split'] != 'development' for task in manifest['tasks']):
         raise ValueError('DFS pilot uses only development tasks')
-    if args.batch > len(manifest['tasks']):
-        raise ValueError('The batch requires more distinct tasks than the development suite contains')
+    missing = set(TASK_IDS) - {task['task_id'] for task in manifest['tasks']}
+    if missing:
+        raise ValueError('The fixed development tasks are missing: ' + ', '.join(sorted(missing)))
     if digest(BASELINE_CONTROLLER.read_bytes()) != old['baseline_sha256']:
         raise ValueError('Keep the same unified baseline')
+    client, user = clients(old)
+    worker = image_id(old['worker_image'])
     root.mkdir(parents=True, exist_ok=False)
     shutil.copytree(source / 'suite', root / 'suite')
     Tau2Runner(root / 'suite', manifest, client, user, worker,
@@ -120,11 +130,12 @@ def prepare_dfs(args):
         candidates.append(dict(name=name, source=path, sha256=submitted['selected_sha256'],
             starting_reference=f'{source.name}/branches/{name}/{submitted["selected"]}',
             experience=f'experience/{name}'))
-    runs = 2 + 2 * args.batch * args.nodes + 2 * args.batch
-    policy = dict(nodes=args.nodes, depth=args.depth, width=2, batch=args.batch)
+    runs = 2 + 2 * batch * args.nodes + 2 * batch
+    policy = dict(nodes=args.nodes, depth=args.depth, width=2, batch=batch)
     protocol = {key: old[key] for key in ('model', 'user_model', 'worker_image', 'task_limits',
-                'task_ids', 'holdout_task_ids', 'experiment', 'baseline_sha256', 'suite_manifest_sha256')}
-    protocol.update(mode='dfs', seed=args.seed, batch=args.batch, top=len(candidates), candidates=candidates,
+                'holdout_task_ids', 'experiment', 'baseline_sha256', 'suite_manifest_sha256')}
+    protocol.update(mode='dfs', seed=args.seed, task_ids=list(TASK_IDS), batch=batch,
+        top=len(candidates), candidates=candidates,
         dfs=policy, source_campaign=str(source),
         research_budgets=dict(task_runs=runs, seconds=max(5400, runs * 150),
             model_calls=runs * old['task_limits']['model_calls'] + 256,
@@ -133,7 +144,9 @@ def prepare_dfs(args):
                          for path in (root / 'experience').rglob('*') if path.is_file()},
         design='New development-only depth-first study from explicitly completed Top 3 submissions and their '
                'own public evidence. The host records parent-child edges, explores children before siblings, '
-               'and backtracks at the frozen depth limit or exhausted child slots. Full paired batches precede expansion; '
+               'and backtracks at the frozen depth limit or exhausted child slots. Every comparison uses the same '
+               'fixed task_ids in their frozen order, once per candidate; the opening pair uses the first task. '
+               'Full paired batches precede expansion; '
                'scores never automatically prune descendants. Exploration and final selection are separate. '
                'Node count is a maximum, not a novelty quota; explicit early finish remains possible and is '
                'reported as reduced coverage. Reserve one full baseline comparison before submission. '
@@ -288,6 +301,9 @@ def session_for(root, protocol, label, budget, starting=None):
     runner = Tau2Runner(root / 'suite', load_suite(root / 'suite'), client, user,
                        protocol['worker_image'], limits, root / 'private/environments' / label)
     experiment = dict(protocol['experiment'])
+    experiment['question'] += (
+        f" Every comparison uses all {protocol['batch']} fixed development tasks, once per candidate: "
+        + ', '.join(protocol['task_ids']) + '. The task list stays unchanged across evaluations and branches. ')
     dfs = protocol.get('mode') == 'dfs'
     if dfs:
         experiment['question'] += (
@@ -309,15 +325,15 @@ def session_for(root, protocol, label, budget, starting=None):
             "single unsuccessful child, or unfamiliarity with a component is not by itself a reason to stop. "
             "If further search is unjustified or cannot fit, early submission is allowed: explain which "
             "directions remain unexplored. Before finish, evaluate [baseline_candidate, proposed_submission] "
-            f"on a fresh n={protocol['batch']} batch (only baseline if selecting baseline itself). "
+            f"on the same n={protocol['batch']} tasks with fresh runs (only baseline if selecting baseline itself). "
             "Submit the strongest supported evaluated candidate, which need not be the current frontier. "
-            "Report success and cost uncertainty; do not claim a causal gain from noisy development draws.")
+            "Report success and cost uncertainty; do not claim a causal gain from development runs.")
     elif starting:
         experiment['question'] += (
             f" This branch starts from {starting['name']}, selected by the host's random-loop screening. "
             f"Use the supplied starting source as your initial line of investigation. You have "
             f"{budget['task_runs'] - 2} development task runs after the baseline/start opening pair. "
-            f"Evaluate proposed changes with a parent and child sharing n={protocol['batch']} draws, "
+            f"Evaluate proposed changes with a parent and child sharing the fixed n={protocol['batch']} tasks, "
             "then use that evidence for the next revision. Do not reject a design from the first task alone. "
             "Read the relevant public execution evidence and distinguish observations from hypotheses. "
             "The initial generator's templates do not constrain subsequent Python changes. "
@@ -339,7 +355,7 @@ def session_for(root, protocol, label, budget, starting=None):
         starting_source=None if not starting else (root / starting['source']).read_text(),
         max_task_runs=budget['task_runs'], research_seconds=budget['seconds'],
         research_model_calls=budget['model_calls'], research_output_tokens=budget['output_tokens'],
-        task_limits=limits, seed=protocol['seed'] + (1 if starting else 0), **options)
+        task_limits=limits, seed=protocol['seed'] + (1 if starting else 0), fixed_task_batch=True, **options)
 
 
 def screen(root):
@@ -482,7 +498,8 @@ def report(root):
     lines = ['# Top 3 depth-first search' if dfs else '# Random Loop screening and Top 3 research', '', f"Status: **{state['status']}**", '',
              'Development-only pilot. All scores are search evidence; no validation or holdout gain is established.', '',
              f"Seed: {protocol['seed']}. Starting candidates: {len(protocol['candidates'])}. "
-             f"Shared batch draws: {protocol['batch']}. Branches: {protocol['top']}.", '']
+             f"Shared batch tasks: {protocol['batch']}. Branches: {protocol['top']}.", '',
+             'Frozen development task IDs: ' + ', '.join(protocol['task_ids']) + '.', '']
     if dfs:
         lines += [protocol['design'], '', f"DFS limits: {protocol['dfs']}. Per-branch caps: {protocol['research_budgets']}.", '',
                   '## Frozen starting submissions', '', '| Loop | Submitted source |', '|---|---|']
@@ -603,7 +620,6 @@ def main():
     parser.add_argument('--worker-image', default='python:3.12-slim')
     parser.add_argument('--seed', type=int, default=20260913)
     parser.add_argument('--count', type=int, default=10)
-    parser.add_argument('--batch', type=int, default=5)
     parser.add_argument('--top', type=int, default=3)
     parser.add_argument('--deep-runs', type=int, default=20)
     parser.add_argument('--nodes', type=int, default=6)

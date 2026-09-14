@@ -319,17 +319,22 @@ help, reconsider the explanation and the available design choices. Additional
 components and more varied designs are useful only if results justify them.
 
 `evaluate(candidate_ids, n, repeats=1)` freezes every listed candidate before the
-host draws a complete batch of `n` distinct tasks uniformly without replacement.
+host selects the complete shared batch. In BFS/DFS, the host freezes an explicit
+task list: every comparison must use the entire list (`n` equals its length), in
+the same order, with `repeats=1`. The opening trial uses only its first task.
+The `evaluate` tool description states the episode's task policy and fixed IDs.
+Other studies draw `n` distinct tasks uniformly without replacement.
 `n` must not exceed the number of development tasks; an oversized request is
 rejected before saving an evaluation or consuming randomness. Separate evaluations
-may reuse tasks. The first
+may reuse tasks; BFS/DFS always reuses its fixed list. The first
 candidate is the control. Every candidate runs on every draw and repeat in a
 fresh environment and worker; order rotates by draw plus repeat. The request
 requires `len(candidate_ids) * n * repeats` remaining development runs. A singleton
 list evaluates one candidate through the same path. The initial baseline trial
 uses one development run. Candidate IDs must be unique.
 
-For example, `evaluate(candidate_ids=["c0000", "c0001"], n=2, repeats=2)` requests
+Where the episode allows sampling and repeats,
+`evaluate(candidate_ids=["c0000", "c0001"], n=2, repeats=2)` requests
 eight runs and returns four paired comparisons. Pairing uses draw and repeat;
 explicit repeats cannot overwrite earlier results. Repeats measure variability,
 not additional independent scenarios. Identical task seeds do not guarantee

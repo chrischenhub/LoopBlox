@@ -137,12 +137,17 @@ The trusted HTTP transport process is separate from the isolated candidate worke
    source as research documentation, never as task-agent input. Exact-source
    duplicates reuse the existing ID and original rationale; further evaluations
    use that ID. Do not enforce a fixed research sequence or novelty quota.
-4. Freeze all candidates in an evaluation before drawing the complete shared
-   development batch uniformly without replacement from the recorded host seed.
+4. Freeze all candidates in an evaluation before selecting the complete shared
+   development batch. BFS/DFS uses the explicit task IDs in
+   `loopblox/experiments/search.py::TASK_IDS`, frozen into the campaign protocol.
+   Every comparison runs that entire list once per candidate, in the same task order;
+   the separate opening trial uses its first task. Batch size derives from the list.
+   Other studies draw uniformly without replacement from the recorded host seed.
    Each evaluation contains `n` distinct tasks; reject `n` larger than the available
    development set before creating evaluation artifacts or consuming randomness.
-   Separate evaluations may reuse tasks. Explicit `repeats` repeats a chosen task
-   and is distinct from sampling it twice within the batch.
+   Separate evaluations may reuse tasks; BFS/DFS always reuses the fixed list.
+   Explicit `repeats`, where allowed, repeats a chosen task and is distinct from
+   sampling it twice within the batch. BFS/DFS requires `repeats=1`.
    Run each candidate on each draw and repeat with fresh environments/workers,
    rotating order by draw plus repeat. Pair by draw and repeat, not task ID alone.
    Repeats do not add independent task groups. Preallocate all planned runs;
