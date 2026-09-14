@@ -47,13 +47,11 @@ the repository root.
 There are no third-party runtime dependencies. The generated `dist/` contains the
 English page, locally served fonts and their licenses, downloadable component
 contracts, and the exact baseline Python source. A rebuild replaces this derived
-output, so retired atlas pages cannot remain in a publication.
+output.
 
 The website is an ordinary directory in the main repository. Local deployment
 metadata under `.openai/` is ignored by Git and is not required to build or preview.
 Configure your own hosting destination when publishing. Publish only `dist/`;
 experiment data, credentials and source snapshots are not part of the static output.
 
-The former four-harness atlas is retired. Native harness evidence is maintained in
-[the source analysis](../harness-decomposition.md) and [pinned sources](../docs/sources.md).
 Bundled fonts retain their [own licenses](assets/fonts/README.md).

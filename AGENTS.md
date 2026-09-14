@@ -274,25 +274,7 @@ Humans review definitions and implementations, then incorporate accepted compone
 into `loopblox/runtime/components.py` for a new library condition and episode. Never mutate an active
 experiment's library. Ordinary composition search needs no approval.
 
-## 6. Four-harness evidence
-
-Ground design questions in the reference harnesses. Module names are evidence, not
-the canonical taxonomy. Provenance is in
-[the source baseline record](docs/sources.md); decomposition
-and known gaps are in [harness-decomposition.md](harness-decomposition.md).
-
-- Pi `b8b873b`: `packages/agent/src/agent-loop.ts`.
-- DSH `4e84901`: `packages/core/agent-loop/src/agent.ts`; the Cordis tutorial also
-  demonstrates direct code-driven tool execution.
-- Codex `27bf160`: `codex-rs/core/src/session/turn.rs`.
-- Claude Code: [official loop documentation](https://code.claude.com/docs/en/agent-sdk/agent-loop)
-  and [hooks guide](https://code.claude.com/docs/en/hooks-guide). The March 2026 unofficial
-  snapshot is not evidence of current official behavior.
-
-Map real behavior boundaries and exercise different compositions; four similar
-model/tool cycles do not prove full expressiveness. A reconstructed loop is not a
-native replica. Native optimization claims require a pinned original baseline and
-validation of the change in that implementation.
+## 6. Website
 
 `site/` is the English, read-only LoopBlox introduction focused on domain loop auto
 research. Its SVG illustrations explain research, the supplied reactive task loop,
@@ -301,8 +283,7 @@ The parent README and loop.md own direction, status and definitions. The website
 uses explicit snapshots; component families/contracts and baseline source derive
 from loopblox/runtime/components.py and controllers/reactive.py. Refresh snapshots with
 `python3 site/build.py --refresh-notes`, then review the English summaries against
-the canonical documents. The four-harness atlas is retired from the current website. Current builds must not
-publish retired pages.
+the canonical documents.
 
 ## 7. Engineering
 

@@ -72,7 +72,7 @@ Its defaults use full context, full observations and one selected action per
 decision. Each iteration makes one joint decision request, followed by execution
 and observation when an action is selected. The outer controller returns on the
 completion proposal. The environment supplies the policies and tools. This is a
-minimal LoopBlox model/tool Loop, not an execution of a native coding harness.
+minimal LoopBlox model/tool Loop.
 
 The baseline is a comparison reference, not a required structure for alternatives.
 The current episode's `experiment.json` alone determines available components and
@@ -218,7 +218,7 @@ Each settled run writes `trace.json` and a read-only expandable `trace.html`.
 The report derives family labels and actual calls from the frozen catalog and
 trace. Historical nested calls and their frozen composite source remain readable;
 they do not create current runtime capabilities. Reports cannot reveal unexecuted
-branches or prove native harness equivalence. Model request/tool timing is
+branches. Model request/tool timing is
 recorded, but the current engine still uses sequential decisions and execution.
 Report depth labels derive from the actual call tree: D0 is the complete run,
 D1 its direct component calls, and deeper positions expand component internals.
@@ -393,5 +393,5 @@ Python continuations are not resumed. `loopblox/benchmarks/run_tau2.py` connects
 concrete environments to the same host-side `ResearchSession` and study runner.
 The τ² study freezes retail, telecom and mixed-domain selections before running
 any holdout; mixed search receives the sum of the specialist search budgets.
-SpreadsheetBench 2, Terminal-Bench and native four-harness evaluations are not
+SpreadsheetBench 2 and Terminal-Bench are not
 integrated yet. The obsolete SWE-bench placeholder and launcher have been removed.

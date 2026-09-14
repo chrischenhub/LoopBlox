@@ -165,8 +165,6 @@ A data dependency is not necessarily nesting. Review referencing Execution's out
 
 Report labels D0, D1, D2, and so on derive from the actual call tree and indicate expansion depth. Reports also identify the containing composition and record type: composite component, leaf component, model request, or tool action. Depth labels are neither additional Harness layers nor permanent component properties. Current subcomponents are called directly by the controller. Reports retain historical parent-child relationships without inventing parent nodes from family membership.
 
-Historical native-harness decomposition diagrams are **behavior explanations**. Their D labels indicate reading-group depth supported by source or documentation, not an invocation stack. The old atlas website is retired; its source analysis remains design evidence. Where internals are unpublished, such diagrams can only organize public contracts. Explanation nodes do not enter the approved catalog automatically; execution records establish actual call relationships.
-
 The host ledger counts model and tool usage once. Parent summaries may aggregate descendant costs, but totals must not add those summaries again. Concurrent durations also cannot simply be summed as wall-clock time.
 
 Actual traces explain **what happened in a run**; structural diagrams describe **possible controller behavior**. Both need explicit provenance. Static scenario animations can illustrate behavior but are not execution records or optimization evidence. Current traces record invocation, model-request, and action ownership with timing; current subcomponents have null `parent_id`. Read-only HTML derives capability families from the record and frozen catalog. Historical composite calls retain their original relationships and implementation context. Native stream concurrency, session events, and complete dependency graphs are not yet recorded.
@@ -185,7 +183,7 @@ An exposed internal boundary still does not permit arbitrary edits to approved s
 
 Every new experiment should give the researcher a clear guide covering:
 
-1. The objective and baseline: the question and the supplied Loop or pinned native Harness version.
+1. The objective and baseline: the question and the supplied Loop source.
 2. The frozen exposed boundary: responsibilities and target scopes, components and call sites, triggers, implementation options, composition rules, semantic owners, and fixed internals.
 3. Executable contracts: the episode catalog, scope, inputs, outputs, return, and failure semantics. APIs mentioned only in design documents are unavailable.
 4. Conditions and evidence: task splits, model/environment settings, limits, scoring, task/search cost accounting, expected effects on model input, action effects, state updates or returns, and how to compare them.
@@ -222,19 +220,7 @@ This is a future contract example; Task Execution and AgentWork are not current 
 
 When several levels change together, gains cannot be attributed solely to macro structure. Traces suggest explanations; matched controls and ablations test them. A single success does not establish improvement, and a searched composition may not beat the original baseline. Freeze the model, budget, and statistical protocol separately for each experiment.
 
-## 10. Relationship to native harnesses
-
-Source and official behavior documentation establish native boundaries. Pinned-version decomposition is design evidence. The current website introduces LoopBlox research, components, and the planned domain study; it does not publish the native-harness atlas. Static node labels are insufficient as executable contracts, and matching behavior names across harnesses do not imply interchangeability.
-
-Within the **selected experiment scope**, the coverage goal is to describe rules affecting model input, action effects, state updates, and termination, and map them to implementation. Record responsibility, scope, triggers, integration points, and owners, including uncovered behavior. This does not promise a lossless description of every product feature or require a universal ontology before running an experiment.
-
-[harness-decomposition.md](harness-decomposition.md) records the initial mappings and implementation gaps. It applies these definitions without creating separate levels or permissions.
-
-A claim of native-harness optimization requires a pinned version, an original baseline run, and a variant implemented through that Harness's configuration, extensions, or source. A rewrite in the LoopBlox runtime is a componentized reconstruction. Validate the change in the native implementation before attributing gains to that Harness. The reconstructed default path also needs behavioral-fidelity validation.
-
-[agentic-harnesses](https://github.com/cameronsjo/agentic-harnesses) provides architectural comparisons and decomposition examples, without defining this document's taxonomy. Its [scenario definitions](https://github.com/cameronsjo/agentic-harnesses/blob/main/site/src/data/loops/pi.json) describe preset paths, and its [methodology](https://github.com/cameronsjo/agentic-harnesses/blob/main/docs/methodology.md) limits claims based on recovered Claude Code source. LoopBlox's four reference harnesses and versions are fixed in [AGENTS.md](AGENTS.md#6-four-harness-evidence). Supplementary references do not replace them.
-
-## 11. Current implementation boundaries
+## 10. Current implementation boundaries
 
 - `controllers/*.py` define complete task controllers that directly compose exposed subcomponents. `reactive.py` is the shared baseline; completion review references decision results directly.
 - `loopblox/runtime/components.py` owns four families and the membership and contracts of 14 subcomponents. Each current model-bearing subcomponent makes one logical model call, with every transport attempt charged separately. Families add no calls or permissions.
@@ -243,6 +229,6 @@ A claim of native-harness optimization requires a pinned version, an original ba
 - Invocation records contain actual parent-child relationships. Normal finalization writes JSON traces and expandable read-only HTML showing executed paths and frozen implementations without inventing unexecuted branches.
 - Decide's `tool_filter` filters tool capability categories. `inspect_mutate` selects inspection and mutation tools. Every option still concerns whole-task completion.
 - Tool groups run serially. The host owns models, permissions, scoring, budgets, and original facts.
-- Research connects to environments through a host-provided task runner. τ²-bench uses `ResearchSession` and `loopblox/experiments/study.py`. TextWorld is retired; README owns domain direction and scoring limitations. SpreadsheetBench 2, Terminal-Bench, and automated variant evaluation in the four native harnesses are not integrated. The obsolete SWE-bench placeholder adapter and entry point have been removed.
+- Research connects to environments through a host-provided task runner. τ²-bench uses `ResearchSession` and `loopblox/experiments/study.py`. TextWorld is retired; README owns domain direction and scoring limitations. SpreadsheetBench 2 and Terminal-Bench are not integrated. The obsolete SWE-bench placeholder adapter and entry point have been removed.
 
 Start subsequent work with a complete experiment around one explicit behavioral variable: define responsibility, scope, and invariants; choose existing components or propose a necessary one; then implement, record, and evaluate. These definitions do not require a speculative nesting engine, registry, policy framework, or graph language.

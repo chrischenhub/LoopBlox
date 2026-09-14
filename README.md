@@ -85,7 +85,7 @@ The next formal study asks: **with the same model and components, can a Loop res
 
 The plan uses audited, grouped τ² retail and telecom subsets for two specialist searches and one mixed-domain search. Mixed search receives the sum of the specialist budgets. After all researchers close, the baseline, specialist Loops, and mixed Loop face the same holdout tasks, with total cost and cross-domain performance recorded. Models, budgets, independent repeats, and formal dataset splits still need to be frozen.
 
-TextWorld is retired; τ² is the only current environment. SpreadsheetBench 2 modeling/debugging is a subsequent direction and is not integrated. Terminal-Bench is also not integrated. Pi, DeepSeek Harness, Codex, and Claude Code inform behavior-boundary analysis; see the [pinned sources](docs/sources.md) and [harness decomposition](harness-decomposition.md). There are no native-harness optimization results.
+TextWorld is retired; τ² is the only current environment. SpreadsheetBench 2 modeling/debugging is a subsequent direction and is not integrated. Terminal-Bench is also not integrated.
 
 ## Code and documentation map
 
@@ -114,8 +114,7 @@ site/                     English introduction website
 | [CONTROLLER.md](CONTROLLER.md) | Implemented controller and researcher APIs. |
 | [COMPONENTS.md](COMPONENTS.md) | Generated component contracts; do not edit independently. |
 | [Historical experiment summary](docs/experiments/bfs-dfs-20260914/README.md) | Recorded BFS + DFS results, failures, missing scores, and the sampling deviation. |
-| [Four-harness decomposition](harness-decomposition.md) | Design evidence from pinned versions. Early native-experiment ideas are outside the current run plan. |
-| [Sources and licenses](docs/sources.md) | Pinned upstream versions, provenance, and third-party licenses. |
+| [Sources and licenses](docs/sources.md) | Pinned benchmark source and third-party font licenses. |
 | [Website guide](site/README.md), [font guide](site/assets/fonts/README.md) | Site build, content ownership, and font licenses. `site/snapshots/*.md` are derived build inputs. |
 
 Regenerate `COMPONENTS.md` after component changes and refresh snapshots after changing website inputs:

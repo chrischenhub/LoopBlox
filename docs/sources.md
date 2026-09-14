@@ -1,17 +1,6 @@
 # Pinned sources and third-party licenses
 
-These versions support existing analyses or experiment environments. They are not claims about the latest upstream releases. The source analysis did not execute native harnesses or establish improvements to them.
-
-## Harness behavior analysis
-
-The analysis dates to September 6, 2026. At that time, the three open-source checkouts were verified as clean and their full commit SHAs recorded. The [behavior decomposition](../harness-decomposition.md) links to specific lines in those versions. Upstream source copies are not distributed with this repository.
-
-| Project | Pinned source and main entry point |
-| --- | --- |
-| Pi | [b8b873b9872db04a938fb4357b5e8e824ddc051c](https://github.com/earendil-works/pi/tree/b8b873b9872db04a938fb4357b5e8e824ddc051c), `packages/agent/src/agent-loop.ts`. |
-| DeepSeek Harness | [4e84901e6471b79ec0338099867ebb4606d12bb5](https://github.com/deepseek-ai/deepseek-harness/tree/4e84901e6471b79ec0338099867ebb4606d12bb5), `packages/core/agent-loop/src/agent.ts`. |
-| Codex | [27bf160f7909704fb7e23d508f31900d90479699](https://github.com/openai/codex/tree/27bf160f7909704fb7e23d508f31900d90479699), `codex-rs/core/src/session/turn.rs`. |
-| Claude Code | Official [overview](https://code.claude.com/docs/en/how-claude-code-works), [Agent SDK loop](https://code.claude.com/docs/en/agent-sdk/agent-loop), and [hooks](https://code.claude.com/docs/en/hooks-guide) documentation consulted that day; no pinned official implementation SHA. |
+These sources support the task environment and bundled website assets. Pinned versions identify experiment dependencies, not the latest upstream releases.
 
 ## Task environment
 
