@@ -1,12 +1,12 @@
-# τ² 环境与通用实验命令
+# τ² environment and general experiment commands
 
-更新于 2026-09-14。本页提供环境安装、固定 Loop 比较和领域 study 示例。当前固定 5 题的 BFS／DFS 流程见[实验 guideline](random-search.md)；本页的 development／holdout 划分和显式重复运行选项不属于该 pilot 的配置。
+Updated September 14, 2026. This page covers environment setup, fixed Loop comparisons, and domain studies. The current BFS/DFS protocol uses five fixed tasks; see its [experiment guidelines](random-search.md). The development/holdout splits and explicit repeat options below are separate from that pilot's configuration.
 
-所有命令从仓库根目录执行。先完成 [README 的环境配置](../README.md#快速开始)，并启动 Docker。查看组件目录和本页的 prepare 不调用模型；compare、study、run 和分支研究会调用配置的模型服务，消耗额度。先查看对应命令的 `--help` 并设置预算。
+Run all commands from the repository root. Complete the [README setup](../README.md#quick-start) and start Docker first. Inspecting the component catalog and running this page's `prepare` command do not call models. Comparisons, studies, campaign runs, and branch research use the configured model service and consume quota. Inspect the relevant `--help` output and set budgets first.
 
-核心宿主模块使用标准库；τ² 入口使用其冻结的 Python 3.12 环境，候选 Loop 位于隔离 Docker worker 中。模型使用 `.env` 中的 `FREEINFERENCE_API_KEY`、`FREEINFERENCE_BASE_URL` 和 `FREEINFERENCE_MODEL` 配置。
+Core host modules use the standard library. The τ² entry point uses its frozen Python 3.12 environment; candidate Loops run in isolated Docker workers. Configure the model through `FREEINFERENCE_API_KEY`, `FREEINFERENCE_BASE_URL`, and `FREEINFERENCE_MODEL` in `.env`.
 
-## τ²-bench：领域对比
+## τ²-bench domain comparisons
 
 ```sh
 git clone https://github.com/sierra-research/tau2-bench .artifacts/upstream/tau2-bench
@@ -14,24 +14,24 @@ git -C .artifacts/upstream/tau2-bench checkout 672227c6b6676edc20d57ea53b7000262
 uv sync --project .artifacts/upstream/tau2-bench --frozen --no-dev
 docker pull python:3.12-slim
 
-# 小规模接入检查集：每领域 2 development + 1 holdout
+# Small integration subset: 2 development + 1 holdout task per domain
 .artifacts/upstream/tau2-bench/.venv/bin/python -B -m loopblox.benchmarks.run_tau2 prepare \
   --output .artifacts/tau2/integration-001 --development 2 --holdout 1
 
-# full、brief、Plan→full 三个固定 Loop；只运行 development
+# Three fixed Loops: full, brief, and Plan followed by full; development only
 .artifacts/upstream/tau2-bench/.venv/bin/python -B -m loopblox.benchmarks.run_tau2 compare \
   --suite .artifacts/tau2/integration-001 --output .artifacts/tau2/compare-001
 
-# 对冻结顺序中的每领域前两个开发任务各重跑两遍，观察同任务波动
+# Run the first two frozen development tasks per domain twice to observe variability
 .artifacts/upstream/tau2-bench/.venv/bin/python -B -m loopblox.benchmarks.run_tau2 compare \
   --suite .artifacts/tau2/integration-001 --output .artifacts/tau2/repeat-001 \
   --development-per-domain 2 --repeats 2
 
-# 专用搜索、混合搜索、全部冻结、相同 holdout 对照
+# Specialist and mixed search; freeze all selections, then compare on shared holdout
 .artifacts/upstream/tau2-bench/.venv/bin/python -B -m loopblox.benchmarks.run_tau2 study \
   --suite .artifacts/tau2/integration-001 --output .artifacts/tau2/study-001
 
-# 后续实验的候选集合准备示例：每领域 18 + 18，排除接入检查组
+# Example pool for a later study: 18 + 18 per domain, excluding integration groups
 .artifacts/upstream/tau2-bench/.venv/bin/python -B -m loopblox.benchmarks.run_tau2 prepare \
   --output .artifacts/tau2/domain-001 --development 18 --holdout 18 \
   --seed 3101 --exclude-suite .artifacts/tau2/integration-001
@@ -39,35 +39,35 @@ docker pull python:3.12-slim
 python3 -B -m loopblox.benchmarks.run_tau2 report .artifacts/tau2/study-001
 ```
 
-`prepare` 不调用模型：它审核空轨迹评分，按控制需求分层选取任务，再冻结代码、数据、依赖版本和种子。若审核后组数不足会保留失败记录并退出，不以重复模板填充。运行须使用准备时的 Python 与依赖；每次输出目录必须是新的。
+`prepare` audits empty-trajectory scores, selects tasks stratified by control requirements, and freezes code, data, dependency versions, and seeds without model calls. If too few eligible groups remain, it preserves the failure record and exits rather than filling the set with repeated templates. Runs must use the Python environment and dependencies recorded during preparation. Every output directory must be new.
 
-这是自定义分组 subset，不等同于官方 train/test 划分或完整榜单的可靠性指标。CLI 内部串行执行任务；它不会协调其他进程对同一模型服务的请求。
+These are custom grouped subsets, not the official train/test splits or full-leaderboard reliability metrics. The CLI runs tasks serially and does not coordinate requests from other processes using the same model service.
 
-`compare` 默认使用全部开发任务、每个 controller 运行一次。可用 `--development-per-domain` 在执行前固定每领域的开发任务前缀，并用 `--repeats` 重跑；每次重建环境和 worker，保留相同任务种子，轮换 controller 顺序。报告按任务与重复编号配对。重复运行不增加独立任务组数量，也不保证服务商在相同种子下返回相同结果。
+`compare` defaults to all development tasks with one run per controller. `--development-per-domain` freezes a prefix of each domain's development tasks before execution; `--repeats` reruns those tasks. Each run creates a fresh environment and worker, retains the task seed, and rotates controller order. Reports pair by task and repeat index. Repeats do not add independent task groups or guarantee identical provider responses under the same seed.
 
-宿主通过 `compare(args, controllers=(("control", "failure_reflection.py"), ("stagnation", "stagnation_reflection.py")))` 指定额外候选时，reactive baseline 自动加入。`baseline` 名称保留给统一基线；`control` 表示额外的局部消融对照。未指定额外候选时，默认比较 baseline、brief、plan 三个 Loop。
+A host call such as `compare(args, controllers=(("control", "failure_reflection.py"), ("stagnation", "stagnation_reflection.py")))` adds the reactive baseline automatically. The name `baseline` is reserved for that shared reference; `control` labels an additional mechanism ablation. With no additional controllers specified, the defaults are baseline, brief, and plan.
 
-适配器沿用官方政策、工具、对话状态机、模拟用户和最终评分，替换执行 agent 的 Loop。telecom 的用户拥有独立设备工具，其内部调用和私有指令不进入 controller 上下文。每题新建官方环境与用户状态，并在隔离 Docker worker 中执行候选。`respond_to_user` 发送客户可见回复；外层 `run(env)` 返回结束 controller，但不会代替发送消息，也不代表评分通过。
+The adapter retains the official policies, tools, conversation state machine, simulated user, and final evaluator while replacing the agent's Loop. Telecom users have separate device tools; their internal calls and private instructions are excluded from controller context. Every task gets fresh official environment/user state and an isolated controller worker. `respond_to_user` sends customer-visible messages. The outer `run(env)` return ends the controller; it neither sends a customer message nor certifies success.
 
-**评分以固定版本任务文件为准。** 在固定的 [retail tasks](https://github.com/sierra-research/tau2-bench/blob/672227c6b6676edc20d57ea53b7000262aae77b9/data/tau2/domains/retail/tasks.json) 中，112/114 使用 DB + NL_ASSERTION；[telecom tasks](https://github.com/sierra-research/tau2-bench/blob/672227c6b6676edc20d57ea53b7000262aae77b9/data/tau2/domains/telecom/tasks.json) 中，2253/2285 使用 ENV_ASSERTION，另外 32 个还要求 ACTION。这与上游概览中“DB + COMMUNICATE”的描述不一致。
+**Scoring follows the pinned task files.** In the pinned [retail tasks](https://github.com/sierra-research/tau2-bench/blob/672227c6b6676edc20d57ea53b7000262aae77b9/data/tau2/domains/retail/tasks.json), 112/114 use DB + NL_ASSERTION. In the [telecom tasks](https://github.com/sierra-research/tau2-bench/blob/672227c6b6676edc20d57ea53b7000262aae77b9/data/tau2/domains/telecom/tasks.json), 2253/2285 use ENV_ASSERTION; the other 32 also require ACTION. This differs from the upstream overview's DB + COMMUNICATE description.
 
-首轮 subset 排除非空 LLM 断言、指定动作路径、转交人工以及空轨迹即可得分的任务。它验证交易结果与诊断后的环境条件，不全面评价拒绝、转交、沟通质量或政策遵循。官方评分在 worker 关闭后执行；研究 agent 只读取开发任务的得分和公开轨迹，参考动作、断言与完整用户模拟记录保存在宿主私有目录。
+The initial subset excludes nonempty LLM assertions, prescribed action paths, human handoffs, and tasks that score on an empty trajectory. It verifies transaction outcomes and environment conditions after diagnosis, without comprehensively evaluating refusals, handoffs, communication quality, or policy compliance. Official scoring begins after the worker closes. The researcher can read development scores and public traces; reference actions, assertions, and complete user-simulation records stay in host-private directories.
 
-agent 和模拟用户使用同一固定模型配置，用户温度默认为 0；可用 `--user-model` 单独冻结用户模型。两者共用每题及研究预算，分别报告用量。工具动作上限约束 controller 发出的动作，用户工具由官方状态机和额外步数上限约束。没有冻结美元单价时价格为未知，实际 token 与失败调用成本仍保留。
+The agent and simulated user default to the same model, with user temperature 0. `--user-model` can freeze a separate user model. Both share task and research budgets, with usage reported separately. The action limit applies to controller-issued actions; user tools are bounded by the official state machine and an additional step cap. Dollar cost remains unknown unless unit prices are frozen. Actual token use and failed-call costs remain recorded.
 
-SpreadsheetBench 2 是后续验证方向：建模／调试需要依照[官方运行说明](https://github.com/RUCKBReasoning/SpreadsheetBench-2)用 LibreOffice 重算工作簿；可视化除了 VLM 判断，还涉及官方 Windows Excel/WPS 图像导出。接入前需逐题审核评分覆盖与依赖，不能将财务表格能力直接称为完整 accounting operations。
+SpreadsheetBench 2 is a subsequent validation direction. Its [official instructions](https://github.com/RUCKBReasoning/SpreadsheetBench-2) require LibreOffice recalculation for modeling/debugging; visualization evaluation also involves Windows Excel/WPS image export alongside VLM assessment. Audit task scoring and dependencies before integration. Financial spreadsheet tasks alone do not establish full accounting-operations capability.
 
-## 组件目录与执行报告
+## Component catalog and execution reports
 
 ```sh
-# 导出当前完整组件目录
+# Export the current full component catalog
 python3 -B -m loopblox.runtime.components
 
-# 从同一份定义更新可读契约
+# Regenerate readable contracts from the same definitions
 python3 -B -m loopblox.runtime.components --markdown > COMPONENTS.md
 
-# 为一份已有轨迹生成只读报告
+# Generate a read-only report from an existing trace
 python3 -B -m loopblox.report path/to/trace.json --output path/to/report.html
 ```
 
-[COMPONENTS.md](../COMPONENTS.md) 包含每个组件的返回引用类型与完整契约；[CONTROLLER.md](../CONTROLLER.md) 是研究 agent 读取的编排 API。episode 中的 JSON 与 Markdown 目录从同一份过滤结果生成，以实际开放选项为准。
+[COMPONENTS.md](../COMPONENTS.md) lists each component's returned reference type and full contract. [CONTROLLER.md](../CONTROLLER.md) is the composition API read by the researcher. Episode JSON and Markdown catalogs derive from the same filtered definitions; only the episode's exposed options are available.

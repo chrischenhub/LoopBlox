@@ -306,6 +306,9 @@ publish retired pages.
 
 ## 7. Engineering
 
+Maintain repository documentation in English, including public experiment summaries.
+Historical experiment records and their frozen sources remain exact.
+
 Python implementation lives under `loopblox/`: runtime, research, experiments and
 benchmarks. `controllers/` contains complete Loop sources; root `experiments/`
 contains JSON conditions. Run CLIs as modules from the source root. Do not add

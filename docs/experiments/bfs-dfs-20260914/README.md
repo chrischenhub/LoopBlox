@@ -1,77 +1,77 @@
-# BFS＋Top 3 DFS：2026-09-13～14 pilot
+# BFS + Top 3 DFS: September 13–14, 2026 pilot
 
-这轮实验只用于验证随机起点、成批筛选、局部搜索、计量和恢复。**只有 development，没有 validation 或 holdout，尚不能声称稳定优化收益。** 下列结果是截至 2026-09-14 的公开摘要；完整冻结环境与原始记录保留在本地 `.artifacts/`，不随源码仓库发布。
+This campaign exercised random starts, batch screening, local search, accounting, and recovery. **It used development tasks only, with no validation or holdout, and does not establish stable optimization gains.** This public summary is current through September 14, 2026. Complete frozen environments and raw records remain in local `.artifacts/` and are not distributed with the source repository.
 
-## 已确认的协议偏差：错误使用有放回抽样
+## Confirmed protocol deviation: sampling with replacement
 
-用户要求不放回抽样，但本轮沿用了 `ResearchSession` 中连续调用 `random.choice` 的实现，并将该旧规则写入了冻结协议。要求没有落实到代码、协议和启动前检查。这是实验执行错误。
+The user required sampling without replacement. The campaign instead retained repeated `random.choice` calls in `ResearchSession` and wrote that old rule into the frozen protocol. The requirement was missed in implementation, protocol preparation, and preflight checks. This was an experiment execution error.
 
-首次 BFS 的 `e0001` 已记录批次 `0013、0004、0004、0007、0008`（统一前缀 `retail-development-`），且 `repeats=1`；重复题在初次抽样时产生，与服务重试、恢复或显式重复测量无关。每个候选原计划的 5 次运行只覆盖 4 道不同题，`0004` 占 2/5 的权重。
+The first BFS evaluation, `e0001`, already recorded `0013, 0004, 0004, 0007, 0008` with the prefix `retail-development-` and `repeats=1`. Duplication occurred during initial sampling, independently of service retries, recovery, or explicit repeated measurements. Each candidate's five planned runs covered four distinct tasks; `0004` carried 2/5 of the score weight.
 
-因此，下面的分数和 Top 3 是错误采样规则下的实测结果，不能当成“五道不同题”的筛选结论，也不能断言换成正确采样后 Top 3 不变。直接删掉重复行无法补出缺少的第五道题；旧数据、缺分与开销均保持原样。
+The scores and Top 3 below are observations under that incorrect sampling rule. They cannot be presented as screening on five distinct tasks, and corrected sampling may produce a different Top 3. Dropping the duplicate row would not supply the missing fifth task. Original data, missing scores, and spend remain unchanged.
 
-DFS 复用了相同采样器：已提交的 loop06 最后一次 `e0007`、loop08 最后一次 `e0005` 也都只有 4 道不同题。后续先修正了有放回抽样，再将 BFS／DFS 改为整批复用显式指定的题号。当前设置见[实验 guideline](../../random-search.md)，尚未实际重跑；这些修改不改变本页的历史协议、结果和成本。
+DFS reused the sampler. The submitted loop06 branch's final `e0007` and loop08 branch's final `e0005` also covered only four distinct tasks. Subsequent changes first removed sampling with replacement, then made BFS/DFS reuse a complete list of explicit task IDs. The [current guidelines](../../random-search.md) describe that unrun configuration. Those changes do not alter this page's historical protocol, results, or costs.
 
-## 实验条件
+## Experiment conditions
 
-- τ²-bench retail 的 10 题开发子集，来自已经使用过的历史开发数据；清理旧结果没有消除历史暴露。
-- 执行 agent、研究器和模拟用户使用 `deepseek-v4-flash`，服务地址为 `https://freeinference.org/v1`，temperature 为 0。agent / researcher 的单请求输出上限为 8,192，模拟用户为 2,048。
-- 每题最多 300 秒、40 次动作、64 次模型调用、65,536 输出 token；模拟用户调用也计入题目预算。
-- BFS 随机种子为 20260913；DFS 为 20260914。每批均匀有放回抽样，候选共享完整批次，按抽样位置配对。BFS 的 5 次抽样中有一道题重复，因此仅有 4 道不同题。
-- 统一 [baseline 源码](../../../controllers/reactive.py) 与各候选在相同边界、工具和每题限制下运行。
+- A ten-task τ²-bench retail development subset drawn from previously used development data. Deleting old results did not remove prior exposure.
+- Task agent, researcher, and simulated user used `deepseek-v4-flash` at `https://freeinference.org/v1`, with temperature 0. Per-request output allowances were 8,192 for the agent/researcher and 2,048 for the simulated user.
+- Each task allowed 300 seconds, 40 actions, 64 model calls, and 65,536 output tokens. Simulated-user calls counted toward those limits.
+- BFS seed: 20260913; DFS seed: 20260914. Batches were drawn uniformly with replacement and shared across candidates, paired by draw position. One duplicate among the five BFS draws left four distinct tasks.
+- The shared [baseline source](../../../controllers/reactive.py) and candidates used the same component boundary, tools, and per-task limits.
 
-## 随机筛选与首轮局部研究
+## Random screening and initial local research
 
-生成 10 份不可变 Loop，每个在同一批 5 次抽样上运行，另有 baseline。只在完整评分候选中按通过数及成本排序；缺分不能当作失败补齐后参与排名。
+Ten immutable Loops and the baseline ran on the same five draws. Only fully scored candidates were ranked by passes and cost. Missing scores were not filled in as failures to make a candidate eligible.
 
-| Loop | 通过／计划运行 | 模型调用 | 结果 |
+| Loop | Passes / planned runs | Model calls | Outcome |
 | --- | --- | --- | --- |
-| baseline | 4/5 | 102 | 独立参考。 |
-| loop06 | 5/5 | 122 | Top 1。 |
-| loop08 | 4/5 | 112 | Top 2。 |
-| loop04 | 2/5 | 203 | Top 3。 |
-| loop09 | 2/5 | 251 | 完整评分。 |
-| loop01 | 2/5 | 282 | 完整评分。 |
-| loop05 | 1/5 | 289 | 完整评分。 |
-| loop07 | 1/5 | 297 | 完整评分。 |
-| loop02 | 0/5 | 246 | 完整评分。 |
-| loop03 | 0/5 | — | 4 次失败、1 次缺分，排除排名。 |
-| loop10 | 3/5 | — | 1 次失败、1 次缺分，排除排名。 |
+| baseline | 4/5 | 102 | Separate reference. |
+| loop06 | 5/5 | 122 | Top 1. |
+| loop08 | 4/5 | 112 | Top 2. |
+| loop04 | 2/5 | 203 | Top 3. |
+| loop09 | 2/5 | 251 | Fully scored. |
+| loop01 | 2/5 | 282 | Fully scored. |
+| loop05 | 1/5 | 289 | Fully scored. |
+| loop07 | 1/5 | 297 | Fully scored. |
+| loop02 | 0/5 | 246 | Fully scored. |
+| loop03 | 0/5 | — | Four failures and one missing score; excluded from ranking. |
+| loop10 | 3/5 | — | One failure and one missing score; excluded from ranking. |
 
-缺分候选的成本仍计入总账，表中横线表示此处未展示。Top 3 各自完成首轮自由局部研究：loop06、loop08 保留起点，loop04 将 brief observation 改为 full。这个阶段尚未强制 DFS 顺序。三支均已提交，但历史筛选缺分使 BFS campaign 状态保留为 `incomplete`。
+Costs for candidates with missing scores remain in the ledger; dashes mean they are not displayed here. Each Top 3 branch completed initial free local research. loop06 and loop08 retained their starting Loops; loop04 changed brief observations to full. DFS order was not yet enforced. All three submitted, but historical screening gaps kept the BFS campaign status `incomplete`.
 
-## 显式 DFS
+## Explicit DFS
 
-从上述三份提交及各自公开经验出发，每支最多 6 个新节点、深度 3、每节点 2 个孩子。每条父子边都执行完整 5 次共享抽样配对，得分下降不自动剪枝。每支最多 72 次题目尝试，开场、父子比较、最终 baseline 比较及此前失败开销均计入。
+Each branch started from one of those submissions and its own public experience. Limits were six new nodes, depth three, and two children per node. Every parent-child edge completed a paired batch of five shared draws before expansion; lower scores did not automatically prune descendants. The cap was 72 task attempts per branch, including opening trials, parent-child comparisons, the final baseline comparison, and prior failed attempts.
 
-| 分支 | 完成情况 | 最后一次共享批次：候选 / baseline | 模型调用：候选 / baseline |
+| Branch | Completion | Last shared batch: candidate / baseline | Model calls: candidate / baseline |
 | --- | --- | --- | --- |
-| loop06 | 6 个新节点，深度 3；提交 c0005。 | 4/5 / 3/5 | 168 / 129 |
-| loop08 | 4 个新节点，深度 3；提交 c0002。 | 5/5 / 5/5 | 132 / 119 |
-| loop04 | 未完成提交；最新恢复开场被 `rate_limit` 阻断。 | 无最终配对。 | — |
+| loop06 | Six new nodes, depth three; submitted c0005. | 4/5 / 3/5 | 168 / 129 |
+| loop08 | Four new nodes, depth three; submitted c0002. | 5/5 / 5/5 | 132 / 119 |
+| loop04 | No completed submission; `rate_limit` blocked the latest recovery's opening trial. | No final pair. | — |
 
-两个已提交源码保留在各自原始 campaign 的 `selected-controller.py` 中。loop06 保留完成复核和失败／重复反思，连续三次异常时清空下一轮显式反思 guidance；这不会清除 full context 中的历史。源码里的机制解释属于候选自身主张。loop08 在开场 Plan 后加入工具失败时的反思。
+The submitted sources remain in their original campaigns' `selected-controller.py`. loop06 retained completion review and failure/repetition reflection, clearing explicit reflection guidance for the next iteration after three consecutive anomalies. That does not erase full-context history. Mechanism explanations in candidate source are the candidate's claims. loop08 added reflection after tool failures following an opening Plan.
 
-loop06 的一个超时尝试即使原始环境 reward 为 1，仍按宿主最终状态计为失败，不能改写为 5/5。loop08 的此前失败研究消耗了额度，因此实际新节点少于 6 个。两个分支的最终批次各自独立，不能直接根据 4/5 和 5/5 给分支排名。
+One loop06 timeout had raw environment reward 1 but was scored as a failure under the host's final status; its result cannot be rewritten as 5/5. Prior failed research consumed loop08's allowance, reducing its actual new-node count below six. The two branches used separate final batches, so 4/5 versus 5/5 does not directly rank them.
 
-## 总开销与中断
+## Total spend and interruptions
 
-| 阶段 | 题目尝试 | 已评分 | 缺分 | 模型调用 |
+| Stage | Task attempts | Scored | Missing scores | Model calls |
 | --- | ---: | ---: | ---: | ---: |
-| BFS 筛选＋最初 Top 3 研究及恢复 | 110 | 107 | 3 | 3,814 |
-| 显式 DFS 及恢复 | 150 | 148 | 2 | 4,863 |
-| 合计 | 260 | 255 | 5 | 8,677 |
+| BFS screening, initial Top 3 research, and recovery | 110 | 107 | 3 | 3,814 |
+| Explicit DFS and recovery | 150 | 148 | 2 | 4,863 |
+| Total | 260 | 255 | 5 | 8,677 |
 
-模型调用包含研究器、执行 agent 和模拟用户。恢复链中的已完成副本只计一次；分支累计 DFS 尝试为 loop06 72 次、loop08 64 次、loop04 14 次。
+Model calls include the researcher, task agent, and simulated user. Completed copies in recovery chains are counted once. Cumulative DFS attempts were 72 for loop06, 64 for loop08, and 14 for loop04.
 
-DFS 最新状态为 `interrupted`。loop04 先遇到 `service_not_ready`，之后恢复遇到 HTTP 429 临时 IP 封禁。此前还出现过托管命令会话关闭导致调度退出，以及研究器连续保存相同旧候选的问题。后续使用独立进程会话，并在固定研究器中加入连续重复保存保护：第二次重复后反思一次，第三次仍重复则报错。
+The latest DFS status is `interrupted`. loop04 first encountered `service_not_ready`, then an HTTP 429 temporary IP block during recovery. Earlier problems included scheduler termination when a managed command session closed and repeated saves of the same existing candidate. Later runs used independent process sessions. The fixed researcher gained a duplicate-save guard: the second consecutive duplicate triggers reflection, and a third triggers an error.
 
-修复后的 loop08 只出现一次重复保存，没有触发该保护，不能将完成归因于保护机制。14 分钟恢复规则仅适用于实际 `service_not_ready`，不适用于 429；本轮也曾有外部自动唤醒遗漏，无人值守恢复仍需验证。
+The repaired loop08 run made only one duplicate save, so the guard did not fire and cannot explain its completion. The 14-minute recovery rule applies only to actual `service_not_ready` failures, not HTTP 429. An external automatic wakeup was also missed during this campaign; unattended recovery still needs validation.
 
-## 证据边界与来源
+## Evidence limits and provenance
 
-本页的数字来自冻结 campaign 的报告、宿主记录和汇总账本。原始文件与源码的相对路径、SHA-256 见 [provenance.json](provenance.json)。源路径相对本地 `.artifacts/`，不是新 clone 中可点击的下载入口。未发布的原始轨迹无法仅凭这个摘要独立复核；哈希用于持有原始记录者核对来源。
+Numbers come from frozen campaign reports, host records, and aggregate ledgers. [provenance.json](provenance.json) lists relative source paths and SHA-256 hashes. Paths are relative to local `.artifacts/`, not downloadable artifacts in a fresh clone. This summary alone cannot support independent inspection of unpublished raw traces. Hashes let holders of the original records verify their copies.
 
-当前源码已包含后续工程整理；上述摘要并不把当前 checkout 当作当时的冻结实现。原 campaign 的 `implementation/` 保留了当时的错误采样实现。采用当前固定题号规则需要另建实验；新实验步骤见[实验 guideline](../../random-search.md)。
+Current source includes later engineering changes and is not treated as the implementation used for these results. Each original campaign's `implementation/` preserves its incorrect sampler. The current fixed-task protocol requires a new experiment; see the [guidelines](../../random-search.md).
 
-正式结论仍需要未见任务、独立重复、预先冻结的模型与预算，以及搜索成本和最终任务成本的完整报告。历史缺分、失败与不成功的改动都属于实验结果。
+Formal conclusions still require unseen tasks, independent repeats, frozen models and budgets, and complete reporting of search and final-task costs. Historical missing scores, failures, and unsuccessful changes remain part of the results.

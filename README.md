@@ -1,41 +1,41 @@
 # LoopBlox
 
-把 agent harness 的行为拆成有明确契约的组件，在可验证任务中组合、比较，并让研究 agent 自动搜索更有效的 Loop。
+Compose agent harness behavior from components with explicit contracts, compare those compositions on verifiable tasks, and let a research agent search for better Loops.
 
-Loop 用普通 Python 定义。研究器可以调整组件的顺序、重复、分支和开放选项；宿主固定模型接口、工具、组件实现、预算、隔离与评分。完整任务运行是评价单位，所有候选、调用、失败和成本都有记录。
+Loops are ordinary Python. The researcher can change component order, repetition, branches, and exposed options. The host fixes model interfaces, tools, component implementations, budgets, isolation, and scoring. Complete task runs are the evaluation unit; candidates, calls, failures, and costs are recorded.
 
-**当前处于研究原型阶段。** 当前接入 τ²-bench retail / telecom，完成一轮随机起点筛选和部分深度优先搜索。现有运行用于流程验证，尚未建立 holdout 优化收益。最近一轮结果见 [BFS＋DFS 实验摘要](docs/experiments/bfs-dfs-20260914/README.md)。
+**This is a research prototype.** It integrates τ²-bench retail and telecom. One random-start screening campaign and part of a depth-first search have run to exercise the process; no holdout improvement has been established. See the latest [BFS + DFS experiment summary](docs/experiments/bfs-dfs-20260914/README.md).
 
-## 快速开始
+## Quick start
 
-核心宿主只使用 Python 标准库，无需为核心模块额外安装依赖。使用 Python 3.12；以下命令从仓库根目录执行。
+The core host uses only the Python standard library. Use Python 3.12 and run these commands from the repository root.
 
 ```sh
-# 查看组件契约和现有命令，不请求模型
+# Inspect component contracts and commands without model requests
 python3 -B -m loopblox.runtime.components --markdown
 python3 -B -m loopblox.benchmarks.run_tau2 --help
 python3 -B -m loopblox.experiments.search --help
 ```
 
-τ² 的依赖装在其独立环境中；候选 Loop 在 Docker worker 中运行，具体步骤见下方说明。
+τ² dependencies have their own environment, and candidate Loops run in Docker workers. Setup instructions are linked below.
 
-要运行真实任务，还需要可用的 Docker Engine，以及支持当前结构化 Chat Completions 请求的模型服务：
+Real task runs also require a working Docker Engine and a model service compatible with the current structured Chat Completions requests:
 
 ```sh
 cp .env.example .env
-# 编辑 .env，填写自己的 FREEINFERENCE_API_KEY 和模型配置
+# Set your FREEINFERENCE_API_KEY and model configuration in .env
 ```
 
-环境变量及默认值见 [.env.example](.env.example)。变量名称沿用当前网关；更换服务地址时需要确认其结构化响应兼容性。compare、study 和 research 会消耗模型额度，包括 τ² 模拟用户的调用；每次实验前固定模型和预算。
+Environment variables and defaults are listed in [.env.example](.env.example). Their names follow the current gateway. Verify structured-response compatibility when changing the service address. Comparisons, studies, and research consume model quota, including calls by the τ² simulated user. Freeze the model and budgets before each experiment.
 
-- [运行 τ²](docs/running.md)：固定上游版本，准备任务，执行固定比较和领域研究。
-- [当前实验 guideline](docs/random-search.md)：固定 5 题、BFS 筛选、Top 3 局部研究、DFS 和运行预算。
-- [编写 Loop](CONTROLLER.md)：组件引用、调用与外层 `run(env)` 的返回。
-- [网站构建](site/README.md)：英文介绍页与本地预览。
+- [Run τ²](docs/running.md): pin the upstream version, prepare tasks, and run fixed comparisons or domain studies.
+- [Current experiment guidelines](docs/random-search.md): the fixed five-task subset, BFS screening, Top 3 local research, DFS, and budgets.
+- [Write a Loop](CONTROLLER.md): component references, calls, and the outer `run(env)` return.
+- [Build the website](site/README.md): the English introduction and local preview.
 
-## 一个 Loop
+## A Loop
 
-统一 baseline 是 [controllers/reactive.py](controllers/reactive.py)：
+The shared baseline is [controllers/reactive.py](controllers/reactive.py):
 
 ```python
 def run(env):
@@ -48,82 +48,81 @@ def run(env):
         env.component("observe_full", execution=execution["id"])
 ```
 
-基线直接组合完整上下文、模型决策、执行与完整观察，通常每轮一个模型请求。模型提出完成后，由外层 controller 返回；组件返回本身不会结束任务。权威评分发生在 worker 关闭后。
+It directly composes full context, model decisions, execution, and full observations, normally with one model request per iteration. The outer controller returns after a completion proposal; a component return alone does not end the task. Authoritative scoring happens after the worker closes.
 
-当前组件按 Context / Evidence、Propose、Assess、Act 四类组织，共 14 个子组件。类别用于导航，具体契约和开放选项由 [loopblox/runtime/components.py](loopblox/runtime/components.py) 定义，[COMPONENTS.md](COMPONENTS.md) 从同一来源生成。Python 是唯一可执行的 Loop 定义，网站中的图仅用于解释。
+The library has 14 subcomponents organized into Context / Evidence, Propose, Assess, and Act. Families organize the catalog. [loopblox/runtime/components.py](loopblox/runtime/components.py) defines the contracts and allowed options, and [COMPONENTS.md](COMPONENTS.md) is generated from that source. Python is the sole executable Loop definition; website diagrams are explanatory.
 
-| 示例 | 行为 |
+| Example | Behavior |
 | --- | --- |
-| [reactive.py](controllers/reactive.py) | 统一基线，full context + full observation。 |
-| [brief_work.py](controllers/brief_work.py) | 将基线的观察改为 brief。 |
-| [plan_then_work.py](controllers/plan_then_work.py) | 在基线前加一次 Plan。 |
-| [planned_work.py](controllers/planned_work.py) | 先规划，对完成提案进行复核。 |
-| [reviewed_plan.py](controllers/reviewed_plan.py) | 每批动作前生成和审查计划。 |
-| [failure_reflection.py](controllers/failure_reflection.py) | 工具失败后反思。 |
-| [stagnation_reflection.py](controllers/stagnation_reflection.py) | 工具失败或连续相同动作与结果时反思。 |
+| [reactive.py](controllers/reactive.py) | Shared baseline with full context and full observations. |
+| [brief_work.py](controllers/brief_work.py) | Changes the baseline's observations to brief. |
+| [plan_then_work.py](controllers/plan_then_work.py) | Adds one opening Plan to the baseline. |
+| [planned_work.py](controllers/planned_work.py) | Plans first and reviews completion proposals. |
+| [reviewed_plan.py](controllers/reviewed_plan.py) | Generates and reviews a plan before each action group. |
+| [failure_reflection.py](controllers/failure_reflection.py) | Reflects after tool failures. |
+| [stagnation_reflection.py](controllers/stagnation_reflection.py) | Reflects after tool failures or consecutive identical actions and results. |
 
-研究器自己的固定 Loop 位于 [controllers/research.py](controllers/research.py)。重复结果只是反思的启发式，不能单独证明没有进展或某个改动有效。
+The researcher's fixed Loop is [controllers/research.py](controllers/research.py). Repeated results are a reflection heuristic; they do not by themselves establish lack of progress or the effectiveness of a change.
 
-## 实验如何进行
+## How experiments work
 
-1. 冻结问题、组件边界、模型、环境、任务划分、种子、基线源码和预算。
-2. 先运行统一 baseline；研究器保存不可变候选，在 development 上评估、读取公开轨迹并选择。
-3. 每次比较先冻结所有候选，再执行完整共享任务批次；每个候选执行整批，按任务位置配对并轮换顺序。BFS／DFS 使用预先指定的同一组 5 道题，不随机抽题，题号见[运行说明](docs/random-search.md)。
-4. 关闭研究器、冻结最终选择后，才运行独立 holdout；最终反馈不返回研究器。
+1. Freeze the question, component boundary, model, environment, task splits, seeds, baseline source, and budgets.
+2. Run the shared baseline. The researcher saves immutable candidates, evaluates them on development tasks, reads public traces, and selects candidates.
+3. Freeze all candidates in each comparison, then run the complete shared task batch. Pair results by task position and rotate candidate order. BFS/DFS uses the same five explicit task IDs on every comparison; see the [guidelines](docs/random-search.md).
+4. Where holdout evaluation is configured, close the researcher and freeze its selection before running it. Final feedback never returns to the researcher.
 
-这里的 training 是**搜索 Python Loop 的组合**，不更新神经网络权重。完整批次先跑完再判断；每批 `n` 道不同题，题池不足时拒绝评估，不通过重复题补齐。BFS／DFS 每轮复用固定题目，每个候选每题运行一次；其他研究默认批内不放回抽样。重复运行不增加独立任务组。训练专用 pilot 明确不运行 holdout。
+Here, training means **searching Python Loop compositions**; model weights do not change. Complete the batch before judging a candidate. Each batch has `n` distinct tasks, and an insufficient task pool causes rejection rather than duplicate padding. BFS/DFS reuses its fixed task list, once per candidate per task. Other studies default to sampling without replacement within each evaluation. Repeated runs do not add independent task groups. Training-only pilots do not run holdout.
 
-执行、研究器和模拟用户共享记录与预算。任务失败、额度耗尽、模型服务错误、宿主故障和评分故障保留各自状态；中断和未知用量不会从账本消失。恢复在新目录中启动新研究器，保留完成分支并扣除已有开销。实验定义见 [loop.md](loop.md)，完整规则见 [AGENTS.md](AGENTS.md)。
+Task execution, research, and simulated-user calls share accounting and budgets. Task failure, exhaustion, model-service errors, host faults, and scoring faults retain distinct statuses. Interruptions and unknown usage stay in the ledger. Recovery starts in a new directory, preserves completed branches, and subtracts prior spend. Definitions are in [loop.md](loop.md); the full rules are in [AGENTS.md](AGENTS.md).
 
-## 当前状态与下一个里程碑
+## Current status and next milestone
 
-2026-09-13～14 的 pilot 从 10 个随机 Loops、每个 5 次共享开发抽样开始，选择 loop06、loop08、loop04。三支完成首轮局部研究后，再进行明确记录父子关系的 DFS。DFS 中 loop06 和 loop08 已提交；loop04 被模型服务错误阻断。本轮误用了有放回抽样，违反不放回要求，BFS 的 5 次抽样仅覆盖 4 道不同题。原始结果保留为存在协议偏差的记录。本轮没有 validation 或 holdout，完整数据与限制见 [实验摘要](docs/experiments/bfs-dfs-20260914/README.md)。
+The September 13–14, 2026 pilot started with 10 random Loops, each evaluated on five shared development draws, and selected loop06, loop08, and loop04. All three completed initial local research before DFS recorded explicit parent-child edges. In DFS, loop06 and loop08 submitted; a model-service error blocked loop04. The campaign incorrectly sampled with replacement, violating the requirement. Its five BFS draws covered only four distinct tasks. Original results remain records of that protocol deviation. There was no validation or holdout; see the [experiment summary](docs/experiments/bfs-dfs-20260914/README.md) for results and limitations.
 
-当前代码已改为固定题号：BFS 和 DFS 使用同一组 5 道 development 题，父子版本各自重跑整批；没有独立 validation/test。**这版协议尚未实际重跑**，设置、阶段和预算见[当前实验 guideline](docs/random-search.md)。
+The current code uses explicit task IDs: BFS and DFS share five development tasks, and both parent and child rerun the full batch. There is no separate validation/test subset. **This protocol has not been rerun yet.** Its settings, stages, and budgets are in the [current experiment guidelines](docs/random-search.md).
 
-下一步正式实验要回答：**同样的模型与组件，针对一个领域搜索的 Loop，能否在未见任务上优于统一基线和混合领域搜索的 Loop？**
+The next formal study asks: **with the same model and components, can a Loop researched for one domain outperform the shared baseline and a mixed-domain Loop on unseen tasks?**
 
-计划使用经过评分审核的 τ² retail / telecom 分组 subset，分别进行两个领域专用搜索和一个混合搜索。混合搜索获得两个专用搜索的预算之和。所有研究器关闭后，将基线、专用 Loop 和混合 Loop 放到相同 holdout 上比较，同时记录总成本与跨领域表现。模型、预算、独立重复和正式数据划分仍需冻结。
+The plan uses audited, grouped τ² retail and telecom subsets for two specialist searches and one mixed-domain search. Mixed search receives the sum of the specialist budgets. After all researchers close, the baseline, specialist Loops, and mixed Loop face the same holdout tasks, with total cost and cross-domain performance recorded. Models, budgets, independent repeats, and formal dataset splits still need to be frozen.
 
-TextWorld 已退役，当前代码仅保留 τ² 环境。SpreadsheetBench 2 的建模／调试任务是后续方向，尚未集成；Terminal-Bench 也未集成。Pi、DeepSeek Harness、Codex 与 Claude Code 仅用于行为边界分析，来源见 [固定参考版本](docs/sources.md) 和 [harness 拆分](harness-decomposition.md)。目前没有原生 harness 优化结果。
+TextWorld is retired; τ² is the only current environment. SpreadsheetBench 2 modeling/debugging is a subsequent direction and is not integrated. Terminal-Bench is also not integrated. Pi, DeepSeek Harness, Codex, and Claude Code inform behavior-boundary analysis; see the [pinned sources](docs/sources.md) and [harness decomposition](harness-decomposition.md). There are no native-harness optimization results.
 
-## 代码与文档导航
+## Code and documentation map
 
 ```text
-loopblox/                 Python 实现；从仓库根目录使用 python -m 运行
-├── runtime/              组件契约、宿主执行、隔离 worker、模型连接与文件操作
-├── research/             单次研究、随机候选生成、DFS 约束
-├── experiments/          搜索／继承／领域实验调度及共用进程函数
-├── benchmarks/           τ² 任务环境与命令入口
-└── report.py             单次执行轨迹报告
-controllers/              baseline、机制对照与固定研究器 Loop
-experiments/              JSON 实验条件：研究问题与开放组件
-docs/                    运行说明、来源、限制及公开实验摘要
-site/                     英文介绍网站
+loopblox/                 Python implementation; run modules from the repository root
+├── runtime/              Component contracts, host execution, isolated worker, model and file I/O
+├── research/             Research episodes, random candidate generation, DFS constraints
+├── experiments/          Search, inheritance, domain studies, and shared process control
+├── benchmarks/           τ² environment and command entry point
+└── report.py             Reports for individual execution traces
+controllers/              Baseline, mechanism controls, and the fixed researcher Loop
+experiments/              JSON conditions: research questions and exposed components
+docs/                    Running instructions, sources, limitations, and public experiment summaries
+site/                     English introduction website
 ```
 
-`loopblox/experiments/` 是调度代码，根目录 `experiments/` 是数据配置。
-文档按职责维护；历史记录和构建快照不作为当前实验设置的独立来源：
+`loopblox/experiments/` contains orchestration code; the root `experiments/` contains configuration data. Each document has a defined responsibility. Historical records and build snapshots do not independently define the current experiment settings.
 
-| 文档 | 职责与状态 |
+| Document | Responsibility and status |
 | --- | --- |
-| [README.md](README.md) | 项目入口、当前状态、下一阶段目标及文档导航。 |
-| [当前实验 guideline](docs/random-search.md) | 当前 BFS／DFS 的任务、步骤、预算与证据限制。 |
-| [运行 τ²](docs/running.md) | 环境安装、通用固定比较与领域 study；其中 holdout 示例不属于当前 BFS／DFS。 |
-| [AGENTS.md](AGENTS.md) | 工程约束、冻结、记账、隔离、研究与恢复规则。 |
-| [loop.md](loop.md) | Harness、Loop、Component、Invocation 和实验边界定义。 |
-| [CONTROLLER.md](CONTROLLER.md) | 当前可执行的 controller／researcher API。 |
-| [COMPONENTS.md](COMPONENTS.md) | 从组件实现生成的契约，不独立编辑。 |
-| [历史实验摘要](docs/experiments/bfs-dfs-20260914/README.md) | 已跑 BFS＋DFS 的结果、失败、缺分和旧抽样偏差。 |
-| [四个 harness 的行为拆分](harness-decomposition.md) | 固定版本的设计依据；早期原生实验设想不属于当前运行计划。 |
-| [来源与许可](docs/sources.md) | 固定上游版本、来源与第三方许可。 |
-| [网站说明](site/README.md)、[字体说明](site/assets/fonts/README.md) | 网站构建、内容来源和字体许可；`site/snapshots/*.md` 是构建需要的派生快照。 |
+| [README.md](README.md) | Project entry point, current status, next milestone, and navigation. |
+| [Current experiment guidelines](docs/random-search.md) | BFS/DFS tasks, stages, budgets, and evidence limits. |
+| [Run τ²](docs/running.md) | Environment setup, general fixed comparisons, and domain studies. Its holdout examples are separate from the current BFS/DFS pilot. |
+| [AGENTS.md](AGENTS.md) | Engineering, freezing, accounting, isolation, research, and recovery rules. |
+| [loop.md](loop.md) | Harness, Loop, Component, Invocation, and experiment-boundary definitions. |
+| [CONTROLLER.md](CONTROLLER.md) | Implemented controller and researcher APIs. |
+| [COMPONENTS.md](COMPONENTS.md) | Generated component contracts; do not edit independently. |
+| [Historical experiment summary](docs/experiments/bfs-dfs-20260914/README.md) | Recorded BFS + DFS results, failures, missing scores, and the sampling deviation. |
+| [Four-harness decomposition](harness-decomposition.md) | Design evidence from pinned versions. Early native-experiment ideas are outside the current run plan. |
+| [Sources and licenses](docs/sources.md) | Pinned upstream versions, provenance, and third-party licenses. |
+| [Website guide](site/README.md), [font guide](site/assets/fonts/README.md) | Site build, content ownership, and font licenses. `site/snapshots/*.md` are derived build inputs. |
 
-更新组件后重新生成 `COMPONENTS.md`；更新网站输入后刷新快照：
+Regenerate `COMPONENTS.md` after component changes and refresh snapshots after changing website inputs:
 
 ```sh
 python3 -B -m loopblox.runtime.components --markdown > COMPONENTS.md
 python3 -B site/build.py --refresh-notes
 ```
 
-原始实验、冻结环境和恢复链存放在被 Git 忽略的 `.artifacts/`；公开摘要位于 `docs/experiments/`。新 clone 需要重新准备任务环境，源码仓库不携带原始任务轨迹、模型凭据或本机部署身份。历史数据暴露不会因清理文件而重置。MIT 许可证见 [LICENSE](LICENSE)，第三方来源及字体许可证见 [docs/sources.md](docs/sources.md)。
+Raw experiments, frozen environments, and recovery chains live in Git-ignored `.artifacts/`; public summaries live in `docs/experiments/`. A fresh clone requires task-environment setup. The source repository excludes raw task trajectories, model credentials, and local deployment identity. Deleting files does not reset historical task exposure. See [LICENSE](LICENSE) for MIT terms and [docs/sources.md](docs/sources.md) for third-party sources and font licenses.

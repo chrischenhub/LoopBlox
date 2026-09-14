@@ -1,250 +1,248 @@
-# Harness、Loop、组件与实验范围
+# Harness, Loop, components, and experiment scope
 
-本文是 LoopBlox 关于 Harness、Loop、Component、Invocation、行为范围与实验边界的唯一权威定义，更新于 2026-09-14。它取代“所有组件必须是宏观阶段”的旧限制，也不再用 loop / loop exec 二分承担整个 Harness 的分类。工程约束和研究 episode 生命周期见 [AGENTS.md](AGENTS.md)，当前组件契约见 [COMPONENTS.md](COMPONENTS.md)，编排 API 与示例见 [CONTROLLER.md](CONTROLLER.md)。
+This is LoopBlox's authoritative definition of Harness, Loop, Component, Invocation, behavioral scope, and experiment boundaries, updated September 14, 2026. It supersedes the requirement that every component be a macro stage. The Loop / loop-execution distinction does not classify the entire Harness. [AGENTS.md](AGENTS.md) covers engineering constraints and the research episode lifecycle; [COMPONENTS.md](COMPONENTS.md) contains current contracts; [CONTROLLER.md](CONTROLLER.md) describes composition APIs and examples.
 
-本文区分目标设计与当前实现；示意图、概念名称和契约示例不自动成为可用 API。
+This document distinguishes intended design from implemented behavior. Diagrams, concept names, and example contracts do not create callable APIs.
 
-## 1. Harness 与行为职责
+## 1. Harness and behavioral responsibilities
 
-**Harness 是围绕模型组织交互、维护执行状态、落实控制策略，并通过工具与环境交互的软件系统。** 它把用户与会话事件转化为模型请求、环境动作、状态更新和用户可见的响应。Harness 可以调用 SDK 或其他运行时完成其中一部分工作，无须亲自实现所有机制。
+A **Harness** is the software around a model that manages interaction and execution state, applies control policies, and interacts with tools and environments. It translates user and session events into model requests, environment actions, state updates, and visible responses. It may delegate mechanisms to an SDK or another runtime.
 
-管理交互不等于拥有整个环境。任务工作区和外部服务有自己的状态与效果；LoopBlox 的宿主负责访问边界、事实记录和资源计量。隐藏评测器是实验设施，不属于候选 controller 可以控制或读取的部分。模型、工具和环境的具体边界由实验条件确定。
+Managing interaction does not imply ownership of the whole environment. Task workspaces and external services have their own state and effects. The LoopBlox host enforces access boundaries, factual records, and accounting. Hidden evaluators belong to the experiment infrastructure and are unavailable to candidate controllers. Each experiment defines the boundaries between model, tools, and environment.
 
-先按行为的**职责（surface）**描述 Harness，再决定哪些职责需要成为组件：
+Describe behavior by its **responsibility, or surface**, before deciding which responsibilities need components:
 
-| 行为职责 | 负责的问题 |
+| Behavioral surface | Responsibility |
 | --- | --- |
-| **Interaction / Lifecycle：交互与生命周期** | 接收输入与取消事件，管理会话、steering 和排队消息，交付响应并关闭轮次。 |
-| **Turn Control：轮内控制** | 本轮下一步调用什么；如何分支、继续、恢复，以及是否接受完成建议。 |
-| **State / Context：状态与上下文** | 保存历史与产物，选择模型可见信息，管理摘要、压缩、记忆与指令内容。 |
-| **Model Execution：模型请求执行** | 按给定请求调用模型，处理传输、流与解析，落实请求级重试规则并报告结果。 |
-| **Action Runtime：动作执行** | 暴露工具能力，校验和调度动作，落实授权与隔离，记录动作结果与实际效果。 |
+| Interaction / Lifecycle | Receive input and cancellation, manage sessions, steering and queued messages, deliver responses, and close turns. |
+| Turn Control | Decide what runs next within a turn, including branching, continuation, recovery, and acceptance of completion proposals. |
+| State / Context | Preserve history and artifacts, select model-visible information, and manage summaries, compaction, memory, and instruction content. |
+| Model Execution | Execute a supplied request, handle transport, streaming and parsing, apply request retry rules, and report results. |
+| Action Runtime | Expose tools, validate and schedule actions, enforce authorization and isolation, and record results and actual effects. |
 
-这些是职责划分，不是严格嵌套的五层，也不要求一项职责对应一个模块。**Policy 是某项行为采用的规则，不是另外一层通用控制器。** 权限、预算、验证和停止策略需要注明它们约束的行为与执行位置；hook 是接入行为的机制，本身不决定行为职责。
+These responsibilities do not form five strictly nested layers or require one module each. A **policy** is a rule used by a behavior. Permission, budget, verification, and stopping policies must identify what they constrain and where they execute. A hook is an integration mechanism; it does not itself determine the behavior's responsibility.
 
-每项具体规则只有一个语义所有者。比如：何时请求压缩属于调用侧规则；压缩后保留什么属于上下文策略；完成摘要请求的传输属于模型执行。三者可以配合，但不能分别维护同一条规则的不同版本。跨职责行为通过明确的调用与结果交接组合。
+Every rule has one semantic owner. For example, the caller decides when to request compaction, the context policy determines what survives it, and model execution transports the summarization request. These can compose without maintaining competing versions of one rule. Cross-surface behavior is composed through explicit calls and results.
 
-## 2. 完整 Loop 的范围
+## 2. The scope of a complete Loop
 
-**Loop 是由一个 primary user input（主输入）触发、直到交还控制权的完整控制流程定义。** 在正常完成路径中，它连接主输入与最终回答；可以包含分支、重复、多轮模型调用、工具执行和子任务。它不等于一次模型调用，也不等于一次工具调用。
+A **Loop** is the complete control-flow definition triggered by one primary user input and ending when control returns. Its normal path connects that input to a final response and may include branches, repetition, multiple model calls, tools, and subtasks.
 
-Loop 是 Harness 在一次用户轮次内的完整控制流程定义，不承担整个 Harness 的含义。在 LoopBlox 中，它由 controller 代码表达。Controller 决定何时调用哪个组件、如何使用结果、下一步去哪里，以及何时结束。代码规则可以直接触发已批准行为，无须先获得另一次模型确认。Controller 本身不会自动推理；需要模型决策时，它调用提供该行为的组件。
+A Loop defines control within one user turn of a Harness. In LoopBlox, controller code expresses it: which components to call, how to use their results, where to continue, and when to return. Code may invoke approved behavior directly without another model endorsement. A controller calls a model-bearing component when it needs model reasoning or decisions.
 
-**Task run / trial 是一个 Loop 在具体输入和实验条件上的一次完整运行。** 同一个 Loop 定义可以产生不同路径和不同调用次数。正常结束由最外层 controller 返回决定；中断、资源耗尽和故障是不同的结束状态，不能统称为成功完成。
+A **task run / trial** is one complete execution of a Loop on a concrete input under fixed experiment conditions. The same definition can produce different paths and call counts. The outer controller's normal return ends a run normally. Interruption, exhaustion, and faults retain their own statuses and must not all be described as successful completion.
 
-Loop 的预期复用范围是一类任务。这里区分的是可复用的执行控制策略与具体业务操作流程：controller 组织上下文、决策、动作、反馈、恢复与返回；某次任务的路线、业务步骤与计划可以是运行时产物。业务 workflow 也可能复用，不能只按任务数量或是否有环判断。LoopBlox 搜索的是能处理新实例的 controller，不能把一次轨迹或某个题目的解法当作发现的 Loop。
+A Loop is intended to generalize across a class of tasks. The controller organizes context, decisions, actions, feedback, recovery, and return; a particular task's route, business steps, and plan may emerge at runtime. Business workflows can also be reusable, so task count or the presence of a cycle cannot establish this distinction alone. LoopBlox searches for controllers that handle new instances. One trajectory or a task-specific solution is insufficient evidence of a reusable Loop.
 
-用户在上一轮结束后发来下一条主输入，开始新的 task run。运行中到达的 steering 或 follow-up 不因是一条新消息就自动触发新的运行：由实际 harness 的输入规则决定它被纳入当前过程，还是排队作为后续运行的主输入。实验需明确记录主输入、追加输入与返回边界，不能按消息数或源码中的 `turn` 名称推算运行数。Session 可以跨多轮保留会话状态，但不是本次 Loop 的内部阶段。当前实验每个任务使用新 worker 和 workspace，不实现跨用户轮次的会话延续。
+A new primary input after a previous run closes begins another task run. Steering or follow-up input arriving during execution does not automatically start one: the native Harness decides whether to incorporate it or queue it as a later primary input. Experiments must record primary inputs, additional inputs, and return boundaries, without deriving run counts from message counts or a source symbol named `turn`. A session can retain state across turns, outside the current Loop's internal stages. Current experiments use fresh workers and workspaces per task and do not implement session continuity across user turns.
 
-内部的 **model/tool iteration** 指一轮模型决策与其触发的动作和反馈处理；若需要继续，则进入下一轮。其他循环使用明确名称：UI/event loop 处理界面和异步事件；跨轮次的记忆或技能更新可以构成另一个 adaptation loop。它们不都等于本文的 Loop，也不必都发生在本轮内部。研究 agent 的搜索与评测循环同样位于被测 Loop 之外。
+A **model/tool iteration** is one model decision with the actions and feedback it triggers, followed by another iteration if needed. Name other loops explicitly: a UI/event loop handles interface or asynchronous events, while cross-turn memory or skill updates may form an adaptation loop. These need not be instances of the Loop defined here or occur within the current run. The research agent's search and evaluation loop also sits outside the Loop being tested.
 
-## 3. Component 与 Invocation
+## 3. Component and Invocation
 
-三个核心概念是：
-
-| 概念 | 定义 |
+| Concept | Definition |
 | --- | --- |
-| **Loop** | 由一个主输入触发、直到交还控制权的完整、可复用控制流程定义。 |
-| **Component** | 有明确职责、输入输出和返回条件的可复用行为块。内部可以组合已批准组件。 |
-| **Invocation** | 一个组件在某次运行中被实际调用的实例，有具体输入、输出、状态和成本。 |
+| Loop | A complete, reusable control-flow definition triggered by one primary input and ending when control returns. |
+| Component | A reusable behavioral block with explicit responsibilities, inputs, outputs, and return conditions. It may compose approved components internally. |
+| Invocation | One actual component call within a run, with concrete inputs, outputs, status, and cost. |
 
-宏观阶段也是一种 Component，不需要单独的阶段引擎。一个组件可以调用零次、一次或多次模型，也可以执行多个工具。调用次数由固定组件契约与实际运行结果决定，不能由“它是一个方块”推导出来。
+A macro stage is one kind of Component and needs no separate stage engine. A component can make zero, one, or multiple model calls and execute multiple tools. Its fixed contract and actual execution determine call counts; a single diagram box does not imply a single call.
 
-研究 agent 选择已批准组件、允许的实现选项和编排。批准组件的实现与提示词在一个研究 episode 中固定。候选 controller 中的普通 Python 函数可以组织多层控制流，研究 agent 可以在实验开放的位置修改这些组合代码；这不等于获得批准组件内部代码的修改权。写一个 wrapper 不会自动创建新的批准组件，也不会自动产生可追踪的组件边界。新增组件仍需走提案与人工纳入流程。
+The researcher chooses approved components, allowed implementation options, and composition. Approved implementations and prompts stay fixed within an episode. Ordinary Python functions in a candidate can organize nested control flow, and the researcher can modify composition code where the experiment allows it. This does not grant access to approved component internals. A wrapper creates neither an approved component nor a recorded component boundary. New components still require proposal and human incorporation.
 
-### 3.1 能力类别与子组件
+### 3.1 Capability families and subcomponents
 
-当前组件库按四个 **family（能力类别）** 组织：Context / Evidence、Propose、Assess、Act。类别回答这项可调用行为主要提供什么能力；它不替代描述整个 Harness 的 surface，也不规定 Loop 的阶段或先后顺序。类别定义、说明和子组件归属由 `loopblox/runtime/components.py` 唯一维护，成员与参数见生成的 [COMPONENTS.md](COMPONENTS.md#component-families)。
+The library has four **families**: Context / Evidence, Propose, Assess, and Act. They describe the main capability of a callable behavior, while surfaces describe responsibilities across the whole Harness. Families do not prescribe Loop stages or order. `loopblox/runtime/components.py` owns family definitions, descriptions, and membership. See generated [COMPONENTS.md](COMPONENTS.md#component-families) for members and parameters.
 
-**Subcomponent（子组件）指目录中属于某个 family 的可调用 Component。** 这里的“子”表示目录归属，不代表它运行在一个父组件内部。family 不可调用、不创建 invocation、不产生额外成本，也不授予同类其他组件的权限。当前每个子组件声明一个主要目录类别；跨职责行为仍由其完整 contract 描述。例如执行测试是 Act 的工具行为，其结果可供 Assess 使用。
+A **subcomponent** is a callable Component belonging to a catalog family. Membership does not imply execution inside a parent component. Families are not callable, create no invocations or extra cost, and grant no access to sibling components. Each current subcomponent declares one primary catalog family; its full contract describes behavior spanning multiple responsibilities. For example, executing a test is an Act tool behavior whose results may inform Assess.
 
-每个公开组件项携带冻结的 `family: {id, label, description}`。`parameters` 拥有该子组件自己的可用参数；没有类别级 `mode` 或另一套调度 API。现有 `category` 与 `reference_categories` 继续表示结果引用类型。例如 Plan 属于 Propose，Critique 属于 Assess，但二者都返回 `analysis_result`；同类归属与可互相引用是不同事实。
+Every public entry includes frozen `family: {id, label, description}` metadata. Its own `parameters` define its allowed arguments; there is no family-level `mode` or separate dispatch API. `category` and `reference_categories` continue to describe result-reference types. Plan belongs to Propose and Critique to Assess, but both return `analysis_result`. Family membership and compatible references are separate facts.
 
-当前采用一个编排方式：完整 Python controller 直接调用开放子组件。默认模型／工具循环是一份 baseline controller 配方，不再注册为 AgentWork 组件；当前运行时不提供固定复合组件分发路径。未来若某个完整行为确实需要多次模型或工具调用，应先定义并实现必要契约，不由类别或“底层”二字永久限制调用次数。
+Current composition uses complete Python controllers calling exposed subcomponents directly. The default model/tool cycle is a baseline controller recipe, with no AgentWork registration or trusted composite-dispatch path. If a future complete behavior needs multiple model or tool calls, define and implement that contract first. Neither family membership nor the term "low level" permanently restricts call counts.
 
-## 4. 作用范围与展开层级
+## 4. Scope and expansion depth
 
-描述一个 Harness 行为，至少区分**作用范围（scope）**与**行为职责（surface）**：前者回答“针对哪段生命周期或哪个目标”，后者回答“负责什么”。作用范围可以是 session、一次 turn、一个明确子目标或阶段、一轮 model/tool iteration、一个具体请求或动作。这些是按实际契约使用的范围名称，不是所有 Harness 都必须经过的固定层级。
+A Harness behavior has a **scope**, identifying the lifecycle segment or objective it concerns, and a **surface**, identifying its responsibility. Scope may be a session, turn, explicit subgoal or stage, model/tool iteration, request, or action. These names follow actual contracts; they do not impose a hierarchy every Harness must traverse.
 
-还应说明行为的**触发条件、接入位置和语义所有者**。例如，一次工具动作的授权检查，目标是判断该动作能否产生效果，触发于执行之前；检查可以接在公共 dispatcher 或工具包装内部。接入位置不同，不会自动改变授权规则，也不意味着研究 agent 可以修改它。
+Also identify the behavior's **trigger, integration point, and semantic owner**. An action authorization check decides whether the action may produce effects and runs before execution. It may live in a shared dispatcher or a tool wrapper. Moving that check does not automatically change its rule or make it editable by the researcher.
 
-`step` 必须在使用处具体说明是一轮决策、一批工具动作还是一个阶段，不能默认等于一次 LLM 调用。项目源码中的“outer/macro loop”也不能直接等同于 LoopBlox 的宏观阶段编排。
+Define `step` where it is used: it could mean a decision iteration, tool group, or stage. It does not inherently mean one LLM call. Likewise, a source-level "outer/macro loop" need not be LoopBlox macro-stage composition.
 
-保留以下沟通术语：
+The following terms remain useful for discussion:
 
-- **Loop level**：用户输入之后，宏观行为阶段如何连接，直到交还控制权。
-- **Loop exec level**：展开某个阶段之后，其内部如何执行，包括上下文处理、模型与工具交互、反馈和继续条件。
+- **Loop level:** how macro behavioral stages connect after user input until control returns.
+- **Loop exec level:** how an expanded stage executes internally, including context handling, model/tool interaction, feedback, and continuation.
 
-Loop exec level 是内部执行的总称，不是唯一固定深度。可以把具体候选按“完整工作流 → 阶段内部编排 → 行为操作 → 底层执行机制”逐步展开，但这只是该候选的解释视图，不是完整 Harness 的通用层级表。权限、上下文和取消等行为可能在多个位置参与执行；不能仅凭层级标签推导它们的职责或可修改性。
+Loop exec level names internal execution without fixing its depth. A candidate can be explained by expanding complete workflow, internal stage composition, behavioral operations, and execution mechanisms. That is a view of the candidate, not a universal Harness hierarchy. Authorization, context, and cancellation can act at several integration points. Depth labels do not determine responsibility or edit permission.
 
-下面是当前 `planned_work.py` 的控制流示例。缩进表达 Python 分支，不自动创建组件 invocation：
+This is the current `planned_work.py` control flow. Indentation shows Python branches; it does not create component invocations:
 
 ```text
-完整 Loop：处理本次用户输入
-├─ Context → Plan
-├─ Python 循环
-│  ├─ Context → ThinkDecide
-│  ├─ 动作提案：Execute → Observe → 继续循环
-│  └─ 完成提案：Context → Critique(target=该决策 ID)
-│     ├─ 拒绝：保存评估引用 → 继续循环
-│     └─ 接受：最外层 controller 返回回答
-└─ 模型请求与工具动作分别记在实际拥有它们的组件 invocation 下
+Complete Loop: handle the current user input
+├─ Context -> Plan
+├─ Python loop
+│  ├─ Context -> ThinkDecide
+│  ├─ Action proposal: Execute -> Observe -> continue
+│  └─ Completion proposal: Context -> Critique(target=decision ID)
+│     ├─ Rejected: retain assessment reference -> continue
+│     └─ Accepted: outer controller returns the response
+└─ Model requests and tool actions belong to their owning component invocations
 ```
 
-一轮模型与工具处理是描述执行路径的便利说法，不是必须实现的实体或固定管线。单独的 Think、摘要或 Review 调用不一定附带工具；工具组可以含多个动作；模型请求可以有固定传输重试；子 agent 内部又可展开自己的处理流程。嵌套与并行不要求固定层数。
+A model/tool iteration is a convenient execution description, without requiring a dedicated entity or fixed pipeline. Standalone Think, summary, or Review calls need not involve tools. Tool groups may contain several actions; model requests may have fixed transport retries; a subagent may have its own internal process. Nesting and concurrency do not imply a fixed number of levels.
 
-**完整 Loop 是执行与最终评价的单位；editable scope（允许修改的范围）由每个 experiment 单独规定。** 具体被计量和评分的是它在固定任务条件上的完整 task run，局部调用可以提供诊断指标。组件粒度是抽象深度，不能用评价单位推导修改权限。一个处理完整任务的 controller 可以直接使用细粒度组件，也可以组合宏观组件。前者仍然定义完整 Loop，但并不因此拥有独立阶段边界。
+**The complete Loop is the execution and final-evaluation unit; each experiment separately defines editable scope.** Accounting and scoring apply to its complete task run under frozen conditions. Local calls can supply diagnostic metrics. Component granularity concerns abstraction depth, and the evaluation unit does not determine edit permission. A whole-task controller can directly use fine-grained components or compose macro components. Direct composition still defines a complete Loop without adding an independent stage boundary.
 
-真实 harness 可能只有一个宽泛的自主任务处理阶段，由模型动态安排调查、规划、修改和验证。不得为画出不同形状而虚构独立阶段；也不得把一次运行中观察到的步骤顺序当作代码强制的阶段顺序。
+A native Harness may have one broad autonomous task stage in which the model arranges investigation, planning, edits, and checks dynamically. Do not invent stages to create different diagram shapes or present a sequence observed in one run as a mandatory source-level sequence.
 
-## 5. 组件、编排规则、实现选项与固定约束
+## 5. Components, composition rules, options, and fixed constraints
 
-这些概念各有语义所有者，不应全部变成可任意连线的节点：
+These concepts have different semantic owners and should not all become freely connected graph nodes:
 
-| 内容 | 语义所有者 | 示例 |
+| Item | Semantic owner | Example |
 | --- | --- | --- |
-| 行为组件 | 批准的组件实现 | Review 检查给定产物并返回问题。 |
-| 编排规则 | 调用它的 controller 或父组件 | 执行失败后才调用 Reflect；审查未通过则返工。 |
-| 实现选项 | 组件目录声明的允许选项 | 一个工具执行组件采用串行或符合条件的并行策略。 |
-| 固定约束 | 实验环境与宿主 | 工具权限、资源上限、任务、评分与隐藏反馈边界。 |
+| Behavioral component | Approved component implementation | Review inspects an artifact and returns findings. |
+| Composition rule | Calling controller or parent component | Invoke Reflect only after failure; rework after rejected review. |
+| Implementation option | Allowed options in the catalog | A tool-execution component uses serial execution or a permitted parallel strategy. |
+| Fixed constraint | Experiment environment and host | Tool permissions, resource limits, tasks, scoring, and hidden-feedback boundaries. |
 
-表中的并行执行是未来选项的示例；当前工具组仅支持串行。
+Parallel execution above is a possible future option; current tool groups run serially.
 
-**LoopBlox 将明确选定的 Harness 行为开放为可组合的 Blox、调用规则与批准选项，同时固定其余执行机制和实验条件。** 一个 surface 不必对应一个积木；一个组件可以封装多个职责，前提是契约清楚、语义所有者明确。当前开放范围仍受批准组件目录约束，本文的分类不新增代码修改权限。
+**LoopBlox exposes selected Harness behaviors as composable Blox, calling rules, and approved options while fixing the other mechanisms and experiment conditions.** A surface need not correspond to one block. A component may encapsulate multiple responsibilities with a clear contract and semantic owner. The approved catalog bounds the current search space; this classification adds no edit permissions.
 
-图中的 `decision` 可以只是代码分支，不一定是 LLM Decide。日志、协议转换和输入/结束标记可以被展示，无须成为独立可搜索组件。批准组件的内部代码不会因为在界面中展开而自动开放给研究 agent 修改。
+A diagram's `decision` may be a code branch rather than an LLM Decide call. Logs, protocol conversion, and input/end markers can be displayed without becoming searchable components. Expanding approved internals in a view does not let the researcher modify them.
 
-组件仍应是有实验意义的完整行为，不把每条 Python 语句拆成积木。先明确职责和可替换行为，再决定展示边界。
+Components should remain complete behaviors worth testing experimentally. Do not turn every Python statement into a block. Establish responsibilities and replaceable behavior before defining display boundaries.
 
-## 6. 开发新组件时必须写明的契约
+## 6. Required contracts for new components
 
-| 契约项 | 必须回答的问题 |
+| Contract field | Required answers |
 | --- | --- |
-| **职责与目标范围** | 负责整个任务、一个子目标，还是一批动作的局部处理？不由名称或模型调用次数推断。 |
-| **输入与可见信息** | 读取哪些任务事实、上下文、产物和共享状态？父组件如何提供这些信息？ |
-| **输出与效果** | 返回什么结果？是否更新共享状态、调用工具或造成环境效果？哪些结果交给调用者？ |
-| **内部能力与实现选项** | 可使用哪些批准组件和工具？是否允许多轮模型交互？哪些参数可选，哪些行为固定？ |
-| **返回与失败条件** | 何时把控制权交回调用者？普通失败如何表示？中断、资源耗尽和故障如何传播？ |
+| Responsibility and target scope | Does it handle the whole task, a subgoal, or local work on an action group? Do not infer this from its name or model-call count. |
+| Inputs and visibility | Which task facts, context, artifacts, and shared state can it read? How does the parent supply them? |
+| Outputs and effects | What does it return? Does it update shared state, call tools, or affect the environment? Which results reach the caller? |
+| Internal capabilities and options | Which approved components and tools can it use? Can it make repeated model interactions? Which arguments vary and which behaviors stay fixed? |
+| Return and failure conditions | When does control return to the caller? How are ordinary failures represented? How do interruption, exhaustion, and faults propagate? |
 
-组件契约拥有内部行为；父 controller 拥有它的调用时机和返回后的转移。行为说明需要将职责、目标范围和接入位置映射到这份契约与具体调用处；无需另建一份竞争性的层级 schema。研究 agent 可以在批准范围内改变编排，不能通过伪造组件结果、修改固定提示词或读取隐藏评分扩展权限。
+The contract owns internal behavior; the parent controller owns call timing and subsequent transitions. Map responsibility, scope, and integration points to the contract and concrete call sites without adding a competing hierarchy schema. The researcher can change approved composition, but cannot expand its permissions through fabricated results, replacement prompts, or hidden scoring access.
 
-当前逐组件的可执行契约由 `loopblox/runtime/components.py` 唯一维护，包含 family 定义与归属、参数与结果 schema、引用类别、固定提示词，以及 `contract` 中的职责、范围、内部行为、调用成本语义、状态效果、返回和失败条件。宿主从参数 schema 读取允许的引用类别；这些类别是 API 结果类型，不是新的 Harness 层级。可读的 [COMPONENTS.md](COMPONENTS.md) 由目录生成，不独立定义组件行为。研究 episode 的 `component-contracts.md` 与 `components.json` 从同一份过滤目录生成，只列本次开放的组件与选项；内部源码可见仍不扩大修改边界。
+`loopblox/runtime/components.py` solely owns executable per-component contracts: families and membership, parameter/result schemas, reference categories, fixed prompts, and `contract` fields for responsibility, scope, internals, call-cost semantics, effects, return, and failure conditions. The host reads allowed reference categories from parameter schemas. They are API result types rather than Harness layers. [COMPONENTS.md](COMPONENTS.md) is generated from the catalog. An episode's `component-contracts.md` and `components.json` derive from the same filtered catalog, exposing only its approved components and options. Source visibility does not expand that boundary.
 
-实验需要分别指出改变的是组件身份、调用者的触发与转移规则，还是组件允许的实现选项。还需检查实际信息可见性：例如当前完整上下文已包含先前分析产物，仅删除一个显式输入引用，并不保证消除了该产物的影响。契约使这些差别可检查，因果结论仍需要匹配的对照实验。
+An experiment must distinguish changes to component identity, caller triggers/transitions, and approved implementation options. Inspect actual information visibility as well. Full context already includes earlier analysis artifacts, so removing an explicit input reference may leave the artifact's influence intact. Contracts make this inspectable; causal conclusions still need matched controls.
 
-以一个**未来 Task Execution 组件**为例：输入是明确的子目标、批准的计划与上下文引用；内部可以多轮使用模型和工具；输出是阶段产物、已尝试动作和未解决问题；达到阶段返回条件或遇到已定义的阻塞时交回父 controller。父 controller 决定进入 Review、补充工作或结束任务。确切字段、提示词与实现必须在纳入组件库时确定，本例不定义新 API。
+A **future Task Execution component**, for example, might take an explicit subgoal, approved plan, and context reference; make multiple model/tool calls; and return stage artifacts, attempted actions, and unresolved issues. It would hand control back on a defined stage return condition or blockage. The parent would choose review, further work, or completion. Exact fields, prompts, and implementation must be approved before incorporation; this example creates no API.
 
-名称相同不保证契约相同。当前 `plan` 生成计划产物，不会因为被画成 Planning 就自动拥有独立的多轮规划能力。包装现有 controller 时，必须重新检查目标范围、状态可见性和返回语义。
+Matching names do not guarantee matching contracts. Current `plan` produces a plan artifact; labeling it Planning does not give it independent multi-step planning behavior. Recheck scope, state visibility, and return semantics when wrapping an existing controller.
 
-## 7. 完成信号与控制权
+## 7. Completion signals and control ownership
 
-**组件返回、阶段完成、完整 task run 结束、任务评分成功，是四件不同的事。**
+**Component return, stage completion, task-run termination, and a passing score are separate events.**
 
-- 模型可以提出动作或完成建议，但不直接拥有外层控制流。
-- 子组件返回结果，只结束这次 invocation，控制权回到它的调用者。
-- 父 controller 可以继续、换组件、请求返工，或向自己的调用者返回。
-- 最外层 controller 正常返回，才结束本次 task run；是否成功由环境的权威评测确定。
+- The model may propose actions or completion, while the caller owns outer control flow.
+- A subcomponent return closes that invocation and returns control to its caller.
+- The parent controller may continue, switch components, request rework, or return to its caller.
+- A normal outermost controller return ends the task run. The environment's authoritative evaluator determines success.
 
-嵌套组件必须将完成建议与当前目标范围绑定，不能把“这个子目标完成了”自动升级成“可以回复用户了”。普通组件失败不等于最外层故障；能否恢复取决于明确的契约。中断和资源限制不能通过开启子组件来重置。
+Nested components must bind completion proposals to their current target scope. Finishing a subgoal does not automatically authorize the final user response. An ordinary component failure need not terminate the outer run; recovery follows its explicit contract. Starting a subcomponent cannot reset interruption or resource limits.
 
-当前 `decide` / `think_decide` 的输出是 `ActionsSelected(actions)` 或 `CompletionProposed(response)`。其 JSON 契约定义在 `loopblox/runtime/components.py::decision_schema`，当前面向整个任务，尚无独立阶段目标与阶段完成 API。空动作列表不代表完成。`kind="completion_proposed"` 携带拟返回的 `response`，由调用者决定是否接受；该响应也可以说明实际阻塞。
+Current `decide` / `think_decide` output is `ActionsSelected(actions)` or `CompletionProposed(response)`. The JSON contract is `loopblox/runtime/components.py::decision_schema`. Decisions concern the whole task; separate stage-goal and stage-completion APIs do not exist. Empty actions do not mean completion. `kind="completion_proposed"` carries a proposed `response`, which the caller may accept; it may describe an actual blockage.
 
-当前 controller 直接处理决策结果：可以接受完成提案，也可以将该决策 ID 作为 Critique 的 target，在拒绝后继续决策。普通 Python helper 可以组织这种循环，但不会产生额外工作结果或 `work` 引用类型。独立子目标与子任务完成契约仍未实现。
+Controllers handle decision results directly. They may accept completion or pass the decision ID to Critique and continue after rejection. Ordinary Python helpers can organize this control flow without creating an extra work result or `work` reference type. Independent subgoal and subtask-completion contracts remain unimplemented.
 
-Controller 决定条件性重复，组件内部也可按其固定契约重复；正常完成不要求恰好 N 轮。模型传输重试与重新决策是不同操作：前者遵守宿主固定规则，后者是新的行为调用。工具动作不能因恢复分支而被隐式重放。
+Controllers own conditional repetition; components may also repeat internally under their fixed contracts. Normal completion does not require exactly N iterations. A model transport retry follows fixed host rules, while a new decision is a new behavioral call. Recovery branches cannot implicitly replay tool actions.
 
-## 8. 实际调用、轨迹与可视化
+## 8. Actual invocations, traces, and visualization
 
-Python 保持 Loop 的唯一执行定义，批准组件代码拥有组件行为。初版不增加 JSON 控制流语言或图编译器；网站只读展示。组件可以分层展开，但可查看的细节不等于可修改的实验变量。
+Python remains the sole executable Loop definition, and approved code owns component behavior. The first version has no JSON control-flow language or graph compiler; the website is read-only. Components may be expanded for inspection without making those details editable experiment variables.
 
-轨迹区分：
+Traces distinguish:
 
-- 一次完整 task run；
-- 组件 invocation 及其真实父子关系；
-- 每个组件使用的模型请求、传输尝试、工具动作和环境效果。
+- a complete task run;
+- component invocations and their actual parent-child relationships;
+- each component's model requests, transport attempts, tool actions, and environment effects.
 
-依赖关系不等于嵌套关系：Review 引用了 Execution 的输出，不意味着 Review 是 Execution 的子调用。普通函数调用和未记录的阶段边界不能从名称推测出来。
+A data dependency is not necessarily nesting. Review referencing Execution's output does not make Review a child invocation of Execution. Names cannot establish ordinary function calls or unrecorded stage boundaries.
 
-报告中的 D0、D1、D2… 由本次真实调用树推导，表示展开深度；同时标明所属组合和记录类型（组合组件、叶组件、模型请求或工具动作）。这些显示标签不是新的 Harness 层级，也不是组件的永久属性。当前子组件由 controller 直接调用；报告保留历史记录原有的父子关系，不从 family 归属生成父节点。
+Report labels D0, D1, D2, and so on derive from the actual call tree and indicate expansion depth. Reports also identify the containing composition and record type: composite component, leaf component, model request, or tool action. Depth labels are neither additional Harness layers nor permanent component properties. Current subcomponents are called directly by the controller. Reports retain historical parent-child relationships without inventing parent nodes from family membership.
 
-历史原生 harness 拆分图属于**行为解释图**：其中 D 表示有源码或文档依据的阅读分组深度，不能当作一次运行的 invocation 栈。旧拆分网站已退役；保留的源码分析用于设计参考。尤其官方内部实现未公开时，只表示公开契约的组织方式。解释节点不自动纳入批准组件库；实际调用层级仍须由运行记录确认。
+Historical native-harness decomposition diagrams are **behavior explanations**. Their D labels indicate reading-group depth supported by source or documentation, not an invocation stack. The old atlas website is retired; its source analysis remains design evidence. Where internals are unpublished, such diagrams can only organize public contracts. Explanation nodes do not enter the approved catalog automatically; execution records establish actual call relationships.
 
-模型与工具的实际用量由宿主账本计入一次。父组件可以汇总后代成本，但总成本不能再次加上这个汇总；并行调用的耗时也不能简单累加为墙钟时间。
+The host ledger counts model and tool usage once. Parent summaries may aggregate descendant costs, but totals must not add those summaries again. Concurrent durations also cannot simply be summed as wall-clock time.
 
-真实轨迹说明**这次运行发生了什么**，无法揭示未执行的分支；结构说明图描述**controller 可能如何运行**。两者必须标明来源。静态场景动画可以用于说明，但不能作为实际执行记录或优化证据。当前轨迹记录真实 invocation、模型与动作归属及时间；当前子组件的 parent_id 为 null。只读 HTML 从记录与冻结目录生成能力类别，历史复合调用继续按其原始父子关系和冻结实现展示。它尚不记录原生 harness 的流并发、会话事件或完整依赖图。
+Actual traces explain **what happened in a run**; structural diagrams describe **possible controller behavior**. Both need explicit provenance. Static scenario animations can illustrate behavior but are not execution records or optimization evidence. Current traces record invocation, model-request, and action ownership with timing; current subcomponents have null `parent_id`. Read-only HTML derives capability families from the record and frozen catalog. Historical composite calls retain their original relationships and implementation context. Native stream concurrency, session events, and complete dependency graphs are not yet recorded.
 
-## 9. 研究 agent 的实验范围说明
+## 9. Defining the researcher's experiment scope
 
-研究 episode 在被测任务运行之外：研究 agent 产生候选、请求评测、分析开发反馈；任务中的 controller 处理输入与组件结果。研究循环不是被测 Loop 的一个内部阶段，最终隐藏评分也不回流给已结束的任务运行。
+A research episode sits outside the task run being evaluated. The researcher creates candidates, requests evaluations, and analyzes development feedback; the task controller handles input and component results. The research cycle is not an internal stage of the tested Loop. Final hidden scoring never returns to a completed task controller.
 
-**每个 experiment 在 episode 开始前冻结 exposed composition boundary（对研究 agent 开放的组合边界）。** 它列出开放的组合位置、可用组件与选项，以及被组件封装的固定行为。组件边界可以随实验选择不同展开深度，但在同一 episode 中不能由研究 agent 自行展开、收回或移动。
+**Each experiment freezes its exposed composition boundary before the episode starts.** This specifies editable composition positions, available components and options, and behavior held fixed inside components. Different experiments may expose different depths, but the researcher cannot expand, retract, or move the boundary within an episode.
 
-例如，开放 `Planning → TaskExecution → Review` 时，TaskExecution 的内部行为固定；开放其内部的 `Context → Decide → Execute → Observe` 时，实验必须明确该内部组合位置与父层约束。联合搜索可以开放多个明确位置，不要求全图只有一个深度；同一行为不能同时由一个固定父组件实现和一份独立可编辑内部组合共同定义。
+For example, exposing `Planning -> TaskExecution -> Review` leaves TaskExecution internals fixed. Exposing its internal `Context -> Decide -> Execute -> Observe` requires an explicit internal composition position and parent constraints. Joint search may expose several specified positions without forcing one graph-wide depth. A behavior cannot have two competing definitions in a fixed parent implementation and independently editable internal composition.
 
-显式开放内部边界仍不授予任意改写批准组件源码或提示词的权利。内部组合必须通过本 episode 已批准的接口与选项暴露，或在实验开始前表达为候选组合代码及固定子组件。若现有组件不支持该边界，需要先完成组件提案与纳入，再启动新的 episode。展示时展开组件不改变这些权限。
+An exposed internal boundary still does not permit arbitrary edits to approved source or prompts. Internal composition must be available through the episode's approved interfaces and options, or expressed as candidate code over fixed subcomponents before the experiment starts. If current components cannot express the boundary, propose and incorporate the necessary component before opening a new episode. Visual expansion changes no permissions.
 
-**当前可执行的边界是 root composition boundary。** `experiment.json` 冻结研究问题、候选能直接调用的组件，以及各组件允许的离散选项。宿主在基线、开发与保留集运行中执行同一限制；组合组件只能通过固定实现调用其内部组件。它允许候选自由编排这些外层调用，不负责锁定任意 Python 工作流形状或开放源码中的任意内部位置。内部实验可以将批准的细粒度组件暴露给候选重新组合；要固定一个父工作流并只搜索其中某处，需要先有对应的批准接口，不能仅用说明文字声称已强制执行。
+**The implemented boundary is a root composition boundary.** `experiment.json` freezes the research question, components directly callable by candidates, and each component's allowed discrete options. The host enforces the same restriction for baseline, development, and holdout runs. Any composite component must call its internals through its fixed implementation. Candidates can freely compose exposed outer calls. This does not lock arbitrary Python workflow shapes or expose arbitrary source positions. An internal experiment can expose approved fine-grained components for recomposition. Fixing a parent workflow while searching one internal position requires a corresponding approved interface; prose alone cannot enforce it.
 
-每次新实验都应给研究 agent 一份明确说明，至少包含：
+Every new experiment should give the researcher a clear guide covering:
 
-1. **目标与基线**：要回答什么问题；运行哪个 Loop，或哪个固定版本的真实 harness。
-2. **冻结的开放边界**：具体职责与目标范围、组件与调用位置、触发条件、实现选项和编排规则；由谁拥有规则，哪些内部行为固定。
-3. **可执行契约**：本 episode 的批准目录、目标范围、输入输出、返回与失败语义；不能调用仅出现在设计文档中的 API。
-4. **实验条件与证据**：任务划分、模型与环境设置、资源限制、评分方式，以及运行和搜索的成本记录方式；候选变化预计如何影响模型输入、动作效果、状态更新或返回行为，以及如何比较。
+1. The objective and baseline: the question and the supplied Loop or pinned native Harness version.
+2. The frozen exposed boundary: responsibilities and target scopes, components and call sites, triggers, implementation options, composition rules, semantic owners, and fixed internals.
+3. Executable contracts: the episode catalog, scope, inputs, outputs, return, and failure semantics. APIs mentioned only in design documents are unavailable.
+4. Conditions and evidence: task splits, model/environment settings, limits, scoring, task/search cost accounting, expected effects on model input, action effects, state updates or returns, and how to compare them.
 
-**架构差异不自动成为有意义的实验变量。** 把同一规则移入工具包装，或把等价循环交给 SDK，可能只改变代码组织与维护方式。要研究任务表现，必须指出行为上究竟改变了什么；若只影响执行开销，则明确研究的是开销。不能因为图形或模块边界不同就声称存在新的推理策略。
+**An architectural difference is not automatically a meaningful experiment variable.** Moving a rule into a tool wrapper or handing an equivalent loop to an SDK may change only code organization and maintenance. A task-performance experiment must identify a behavioral change. If only execution overhead changes, state that overhead is the subject. Different graph shapes or module boundaries do not establish a new reasoning strategy.
 
-开放行为与固定条件应分别写明，例如：
+Describe editable behavior and fixed conditions separately:
 
-| 候选实验行为 | 必须保留的边界 |
+| Candidate behavior | Required invariant |
 | --- | --- |
-| 动作失败或被拒绝后，继续决策、反思或返回阻塞结果 | 动作授权规则与强制执行不可绕过；移动检查位置本身不赋予修改权限。 |
-| 何时调用模型可见的检查，以及如何使用其结果 | 权威评分与隐藏测试固定，不能读取或改写评测器。 |
-| 在允许额度内分配规划、行动、检查与提前停止 | 总资源上限和实际用量计量固定，失败与中断成本保留。 |
-| 选择上下文视图，或选择批准的工具调度策略 | 原始事实与效果记录保留；工具实现、允许的并发条件和隔离规则固定。 |
-| 失败后发起新的模型决策 | 新调用正常计费；固定传输重试规则不随 controller 改变。 |
+| Continue, reflect, or return a blockage after action failure or refusal | Authorization rules and enforcement cannot be bypassed. Moving a check does not grant edit permission. |
+| Choose when to invoke model-visible checks and how to use results | Authoritative scoring and hidden tests remain fixed and inaccessible to candidates. |
+| Allocate allowed resources among planning, action, checking, and early stopping | Total limits and actual accounting remain fixed; failures and interruptions retain costs. |
+| Choose context views or approved tool-scheduling strategies | Original facts and effects are preserved; tool implementation, allowed concurrency, and isolation remain fixed. |
+| Make a new model decision after failure | Charge the new call normally; transport retry rules do not vary with the controller. |
 
-这些是实验边界的写法，不表示所有选项已实现。研究 agent 只获得本 episode 明确开放且可执行的部分。
+These are ways to specify boundaries, not a claim that every option is implemented. The researcher receives only the executable capabilities exposed by its episode.
 
-研究范围可以选择以下任意一种；这些是实验条件，不是三套运行时：
+The following scopes are experiment conditions using the same runtime:
 
-| 实验范围 | 可以改变 | 固定部分 |
+| Experiment scope | Editable behavior | Fixed behavior |
 | --- | --- | --- |
-| 宏观编排 | 阶段选择、顺序、交接、分支和重复 | 阶段的内部实现与选项 |
-| 内部执行策略 | 候选中明确开放的内部编排，或组件目录批准的实现选项 | 外层宏观工作流及其他行为 |
-| 联合搜索 | 明确列出的宏观与内部变化 | 未开放的组件实现和环境约束 |
+| Macro composition | Stage selection, order, handoff, branches, and repetition | Stage internals and implementation options |
+| Internal execution strategy | Explicitly exposed internal candidate composition or catalog-approved options | Outer macro workflow and other behavior |
+| Joint search | Specified macro and internal changes | Unexposed implementations and environment constraints |
 
-即使进行内部或联合搜索，批准组件的实现与提示词仍固定，包括已经纳入库的组合组件。研究 agent 改写的是候选中允许编排的 Python，或选择目录开放的选项。若要重写批准组件内部代码，需要提案并在人工纳入后进入新的库条件和 episode。
+Approved implementations and prompts stay fixed even in internal or joint search, including those of incorporated composite components. The researcher edits allowed candidate composition or selects catalog options. Rewriting approved internals requires a proposal, human incorporation, and a new library condition and episode.
 
-可直接用于未来宏观实验的说明示例：
+An example instruction for a future macro experiment is:
 
-> 本次比较 Planning、Task Execution 和 Review 的宏观组合。允许选择、排序、重复和条件调用这些已批准组件；内部实现与参数选择固定。子组件返回只代表其自身完成。由最外层 controller 决定是否继续并最终回复用户。只使用开发任务反馈，最终在未参与搜索的任务上评价完整运行的结果与总成本。
+> Compare macro compositions of Planning, Task Execution, and Review. Select, order, repeat, and conditionally invoke these approved components while fixing their internals and options. A subcomponent return completes only that call. The outer controller decides whether to continue and when to answer. Use development feedback during search, then evaluate complete outcomes and total cost on tasks excluded from search.
 
-上述宏观组件实验是未来契约示例，当前没有 Task Execution 或 AgentWork 组件。随附 `experiments/workflow.json` 直接开放上下文、Plan、ThinkDecide、Critique、Execute 与观察组件，允许同时改变 Python 编排和目录选项，因此属于联合搜索；它不强制固定内部或外部工作流。研究 agent 的实际操作说明由 `CONTROLLER.md` 提供；新 episode 复制 `public/controller-api.md`、`public/loop.md`、冻结的实验说明及过滤后的组件目录。
+This is a future contract example; Task Execution and AgentWork are not current components. The supplied `experiments/workflow.json` directly exposes context, Plan, ThinkDecide, Critique, Execute, and observation components. It permits both Python composition and catalog-option changes, making it joint search without a fixed internal or outer workflow. [CONTROLLER.md](CONTROLLER.md) provides operational instructions. New episodes copy `public/controller-api.md`, `public/loop.md`, the frozen experiment specification, and its filtered catalog.
 
-多个层级同时变化时，不能把收益单独归因于宏观结构。轨迹提供解释线索，对照和消融才用于检验解释；单次成功不证明改进，搜索出的组合也可能不优于原始基线。具体模型、预算和统计方案仍需为实验单独确定。
+When several levels change together, gains cannot be attributed solely to macro structure. Traces suggest explanations; matched controls and ablations test them. A single success does not establish improvement, and a searched composition may not beat the original baseline. Freeze the model, budget, and statistical protocol separately for each experiment.
 
-## 10. 与真实 harness 的关系
+## 10. Relationship to native harnesses
 
-源码和官方行为文档用于确定真实行为边界，固定版本的拆分分析作为设计参考。当前网站介绍 LoopBlox 的研究流程、组件和计划中的领域 study，不发布原生 harness 拆分 atlas。不能把静态节点分类直接当作完整的可执行契约，也不能假定不同 harness 的同名行为可以互换。
+Source and official behavior documentation establish native boundaries. Pinned-version decomposition is design evidence. The current website introduces LoopBlox research, components, and the planned domain study; it does not publish the native-harness atlas. Static node labels are insufficient as executable contracts, and matching behavior names across harnesses do not imply interchangeability.
 
-覆盖目标是在**选定实验范围内**准确描述影响模型输入、动作效果、状态更新与结束行为的规则，并映射到具体实现。对照参考 Harness 时，记录职责、范围、触发条件、接入位置和所有者，标明尚未覆盖的行为。本文不承诺无损描述所有产品功能，也不要求先建立完整通用 ontology 才能实现一个实验。
+Within the **selected experiment scope**, the coverage goal is to describe rules affecting model input, action effects, state updates, and termination, and map them to implementation. Record responsibility, scope, triggers, integration points, and owners, including uncovered behavior. This does not promise a lossless description of every product feature or require a universal ontology before running an experiment.
 
-首轮具体映射与实现缺口记录在 [harness-decomposition.md](harness-decomposition.md)；该文件应用本文定义，不另行定义层级或组件权限。
+[harness-decomposition.md](harness-decomposition.md) records the initial mappings and implementation gaps. It applies these definitions without creating separate levels or permissions.
 
-要声称优化某个原生 harness，应记录其固定版本，运行原版基线，并将变体落到该实现的配置、扩展或代码改动上。把它重写到 LoopBlox runtime 中应称为组件化重建；需在原生实现验证后，才能把改进归到该 harness。组件化默认路径也需要验证是否保持原有行为。
+A claim of native-harness optimization requires a pinned version, an original baseline run, and a variant implemented through that Harness's configuration, extensions, or source. A rewrite in the LoopBlox runtime is a componentized reconstruction. Validate the change in the native implementation before attributing gains to that Harness. The reconstructed default path also needs behavioral-fidelity validation.
 
-[agentic-harnesses](https://github.com/cameronsjo/agentic-harnesses) 提供架构比较与拆分参考，不是本文分类的权威定义。其 [场景定义](https://github.com/cameronsjo/agentic-harnesses/blob/main/site/src/data/loops/pi.json) 是预设路径；其 [方法说明](https://github.com/cameronsjo/agentic-harnesses/blob/main/docs/methodology.md) 也明确限定了 Claude Code 恢复源码的可信范围。LoopBlox 的四个参考 harness 及版本以 [AGENTS.md](AGENTS.md#6-four-harness-evidence) 为准；补充参考其他项目不自动替换这组基线。
+[agentic-harnesses](https://github.com/cameronsjo/agentic-harnesses) provides architectural comparisons and decomposition examples, without defining this document's taxonomy. Its [scenario definitions](https://github.com/cameronsjo/agentic-harnesses/blob/main/site/src/data/loops/pi.json) describe preset paths, and its [methodology](https://github.com/cameronsjo/agentic-harnesses/blob/main/docs/methodology.md) limits claims based on recovered Claude Code source. LoopBlox's four reference harnesses and versions are fixed in [AGENTS.md](AGENTS.md#6-four-harness-evidence). Supplementary references do not replace them.
 
-## 11. 当前实现边界
+## 11. Current implementation boundaries
 
-- `controllers/*.py` 定义完整任务 controller，全部直接编排开放子组件；`reactive.py` 是统一基线，完成复核直接引用决策结果。
-- `loopblox/runtime/components.py` 拥有四个 family 和 14 个子组件的归属与契约。当前带模型行为的子组件各使用一次逻辑模型调用，所有传输尝试独立计量；类别不新增调用或权限。
-- AgentWork、`work` 引用及固定复合分发路径已移除。明确的独立子目标完成契约与子 agent 组件尚未实现。
-- 研究入口要求冻结 experiment 的问题、外层组件和离散选项；宿主强制限制候选调用，尚不支持任意内部位置的编辑约束。
-- 真实 invocation 包含父子关系；每次正常收尾生成 JSON 轨迹与只读可展开 HTML。它展示实际路径和固定实现，不推断未执行分支。
-- 当前 Decide 参数 `tool_filter` 过滤工具能力类别；`inspect_mutate` 选择检查与修改工具。所有取值都面向完整任务的完成建议。
-- 当前工具组串行执行；模型、权限、评分、预算与原始事实由宿主控制。
-- 研究调度通过宿主提供的任务运行函数连接环境。当前接入 τ²-bench，使用 `ResearchSession` 与 `loopblox/experiments/study.py`；TextWorld 已退役；领域路线和评分限制由 README 维护。SpreadsheetBench 2、Terminal-Bench 和原生四个 harness 的自动变体评测尚未接入。旧 SWE-bench 占位适配器与入口已清理。
+- `controllers/*.py` define complete task controllers that directly compose exposed subcomponents. `reactive.py` is the shared baseline; completion review references decision results directly.
+- `loopblox/runtime/components.py` owns four families and the membership and contracts of 14 subcomponents. Each current model-bearing subcomponent makes one logical model call, with every transport attempt charged separately. Families add no calls or permissions.
+- AgentWork, `work` references, and trusted composite dispatch have been removed. Independent subgoal-completion contracts and subagent components are not implemented.
+- Research entry points freeze the question, outer components, and discrete options. The host restricts calls but does not enforce edit constraints at arbitrary internal source positions.
+- Invocation records contain actual parent-child relationships. Normal finalization writes JSON traces and expandable read-only HTML showing executed paths and frozen implementations without inventing unexecuted branches.
+- Decide's `tool_filter` filters tool capability categories. `inspect_mutate` selects inspection and mutation tools. Every option still concerns whole-task completion.
+- Tool groups run serially. The host owns models, permissions, scoring, budgets, and original facts.
+- Research connects to environments through a host-provided task runner. τ²-bench uses `ResearchSession` and `loopblox/experiments/study.py`. TextWorld is retired; README owns domain direction and scoring limitations. SpreadsheetBench 2, Terminal-Bench, and automated variant evaluation in the four native harnesses are not integrated. The obsolete SWE-bench placeholder adapter and entry point have been removed.
 
-后续开发应从一个明确行为变量的完整实验闭环开始：说明其职责、范围与不变量，选择已有组件或提出必要的新组件，再实现、记录和评测。本文的职责与范围描述不要求预先搭建通用嵌套引擎、注册系统、策略框架或图语言。
+Start subsequent work with a complete experiment around one explicit behavioral variable: define responsibility, scope, and invariants; choose existing components or propose a necessary one; then implement, record, and evaluate. These definitions do not require a speculative nesting engine, registry, policy framework, or graph language.
