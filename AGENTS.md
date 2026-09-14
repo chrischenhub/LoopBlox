@@ -3,6 +3,7 @@
 Engineering and experiment policy, updated 2026-09-14.
 
 - [README.md](README.md) owns the project goal, current status and next milestone.
+- [docs/random-search.md](docs/random-search.md) documents the current BFS/DFS configuration and operator workflow; it distinguishes the unrun fixed-task protocol from historical results.
 - [loop.md](loop.md) alone owns Harness, Loop, Component, Invocation and experiment boundary definitions.
 - `loopblox/runtime/components.py` owns executable component contracts; `COMPONENTS.md` is generated.
 - [CONTROLLER.md](CONTROLLER.md) explains the current controller API to the researcher.

@@ -12,6 +12,9 @@ boundaries; they are illustrations, never executable controllers or live traces.
 ## Content ownership
 
 - The parent `README.md` owns the project direction, study question, and status.
+- The current BFS/DFS [experiment guideline](../docs/random-search.md) owns its
+  fixed-task pilot settings. The site's holdout diagram describes the planned
+  domain study; it is not a record of validation or holdout in that pilot.
 - The parent `loop.md` owns the definitions and experiment boundaries.
 - `loopblox/runtime/components.py` owns the component catalog. Family membership, descriptions,
   contracts, and counts are generated from its frozen JSON catalog.

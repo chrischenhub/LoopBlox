@@ -1,4 +1,6 @@
-# 运行实验
+# τ² 环境与通用实验命令
+
+更新于 2026-09-14。本页提供环境安装、固定 Loop 比较和领域 study 示例。当前固定 5 题的 BFS／DFS 流程见[实验 guideline](random-search.md)；本页的 development／holdout 划分和显式重复运行选项不属于该 pilot 的配置。
 
 所有命令从仓库根目录执行。先完成 [README 的环境配置](../README.md#快速开始)，并启动 Docker。查看组件目录和本页的 prepare 不调用模型；compare、study、run 和分支研究会调用配置的模型服务，消耗额度。先查看对应命令的 `--help` 并设置预算。
 

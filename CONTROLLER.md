@@ -175,7 +175,7 @@ The decision parameter `tool_filter` selects disclosed tool kinds:
 `inspect_mutate` includes inspection and mutation tools. All choices retain the
 same whole-task completion target; the component catalog defines their exact mappings.
 
-Current interfaces use these names as of 2026-09-12. AgentWork and the `work`
+Current interfaces use these names; this guide was checked on 2026-09-14. AgentWork and the `work`
 reference type have been removed; completion review targets the decision ID. Reproduce historical episodes
 with their frozen implementation and contracts. Moving an older controller to the
 current library requires updating its API usage and evaluating it under the new
@@ -225,11 +225,12 @@ D1 its direct component calls, and deeper positions expand component internals.
 Component and mechanism record types are shown separately; depth is not a fixed
 Harness layer or a permanent property of a component.
 Interrupted records survive; an abrupt host termination may leave JSON without
-an HTML report. Render recorded traces with `python3 loopblox/report.py <trace.json>`.
+an HTML report. Render recorded traces from the repository root with
+`python3 -B -m loopblox.report <trace.json>`.
 
 ## Research and proposals
 
-The researcher can save immutable Python candidates, evaluate host-sampled
+The researcher can save immutable Python candidates, evaluate host-selected
 development tasks, inspect public files, write notes, select evaluated
 candidates, and propose components in any order. The supplied baseline is
 initially selected. The last selection survives research exhaustion and is
@@ -306,7 +307,8 @@ text stays in the research record and is not passed to task-solving controllers.
 
 Saving exactly the same source text returns its existing ID with `created=false`;
 the original source and rationale are retained. This checks exact text, not
-behavioral equivalence. Reuse candidate IDs when requesting more draws or repeats.
+behavioral equivalence. Reuse candidate IDs when requesting further evaluations
+under the episode's frozen task policy.
 Use `write_notes` for revised hypotheses or reasons to gather further evidence;
 resaving identical code does not create a new design or reset its evaluation record.
 

@@ -29,7 +29,7 @@ cp .env.example .env
 环境变量及默认值见 [.env.example](.env.example)。变量名称沿用当前网关；更换服务地址时需要确认其结构化响应兼容性。compare、study 和 research 会消耗模型额度，包括 τ² 模拟用户的调用；每次实验前固定模型和预算。
 
 - [运行 τ²](docs/running.md)：固定上游版本，准备任务，执行固定比较和领域研究。
-- [随机起点与 DFS](docs/random-search.md)：开发集准备、10 个起点筛选、Top 3 研究和恢复。
+- [当前实验 guideline](docs/random-search.md)：固定 5 题、BFS 筛选、Top 3 局部研究、DFS 和运行预算。
 - [编写 Loop](CONTROLLER.md)：组件引用、调用与外层 `run(env)` 的返回。
 - [网站构建](site/README.md)：英文介绍页与本地预览。
 
@@ -79,6 +79,8 @@ def run(env):
 
 2026-09-13～14 的 pilot 从 10 个随机 Loops、每个 5 次共享开发抽样开始，选择 loop06、loop08、loop04。三支完成首轮局部研究后，再进行明确记录父子关系的 DFS。DFS 中 loop06 和 loop08 已提交；loop04 被模型服务错误阻断。本轮误用了有放回抽样，违反不放回要求，BFS 的 5 次抽样仅覆盖 4 道不同题。原始结果保留为存在协议偏差的记录。本轮没有 validation 或 holdout，完整数据与限制见 [实验摘要](docs/experiments/bfs-dfs-20260914/README.md)。
 
+当前代码已改为固定题号：BFS 和 DFS 使用同一组 5 道 development 题，父子版本各自重跑整批；没有独立 validation/test。**这版协议尚未实际重跑**，设置、阶段和预算见[当前实验 guideline](docs/random-search.md)。
+
 下一步正式实验要回答：**同样的模型与组件，针对一个领域搜索的 Loop，能否在未见任务上优于统一基线和混合领域搜索的 Loop？**
 
 计划使用经过评分审核的 τ² retail / telecom 分组 subset，分别进行两个领域专用搜索和一个混合搜索。混合搜索获得两个专用搜索的预算之和。所有研究器关闭后，将基线、专用 Loop 和混合 Loop 放到相同 holdout 上比较，同时记录总成本与跨领域表现。模型、预算、独立重复和正式数据划分仍需冻结。
@@ -101,7 +103,21 @@ site/                     英文介绍网站
 ```
 
 `loopblox/experiments/` 是调度代码，根目录 `experiments/` 是数据配置。
-研究规则见 [AGENTS.md](AGENTS.md)，组件调用 API 见 [CONTROLLER.md](CONTROLLER.md)，未决问题见 [docs/limitations.md](docs/limitations.md)。
+文档按职责维护；历史记录和构建快照不作为当前实验设置的独立来源：
+
+| 文档 | 职责与状态 |
+| --- | --- |
+| [README.md](README.md) | 项目入口、当前状态、下一阶段目标及文档导航。 |
+| [当前实验 guideline](docs/random-search.md) | 当前 BFS／DFS 的任务、步骤、预算与证据限制。 |
+| [运行 τ²](docs/running.md) | 环境安装、通用固定比较与领域 study；其中 holdout 示例不属于当前 BFS／DFS。 |
+| [AGENTS.md](AGENTS.md) | 工程约束、冻结、记账、隔离、研究与恢复规则。 |
+| [loop.md](loop.md) | Harness、Loop、Component、Invocation 和实验边界定义。 |
+| [CONTROLLER.md](CONTROLLER.md) | 当前可执行的 controller／researcher API。 |
+| [COMPONENTS.md](COMPONENTS.md) | 从组件实现生成的契约，不独立编辑。 |
+| [历史实验摘要](docs/experiments/bfs-dfs-20260914/README.md) | 已跑 BFS＋DFS 的结果、失败、缺分和旧抽样偏差。 |
+| [四个 harness 的行为拆分](harness-decomposition.md) | 固定版本的设计依据；早期原生实验设想不属于当前运行计划。 |
+| [来源与许可](docs/sources.md) | 固定上游版本、来源与第三方许可。 |
+| [网站说明](site/README.md)、[字体说明](site/assets/fonts/README.md) | 网站构建、内容来源和字体许可；`site/snapshots/*.md` 是构建需要的派生快照。 |
 
 更新组件后重新生成 `COMPONENTS.md`；更新网站输入后刷新快照：
 
