@@ -1,0 +1,205 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="theme-color" content="#0d1116">
+<meta name="description" content="LoopBlox is an open-source experiment environment for composing agent behaviors and automatically researching loops for verifiable domain tasks.">
+<meta name="source-snapshot" content="__SOURCE_DIGEST__">
+<title>LoopBlox — Domain Loop Auto Research</title>
+<link rel="preload" href="assets/fonts/DepartureMono-Regular.woff2" as="font" type="font/woff2" crossorigin>
+<link rel="preload" href="assets/fonts/SourceSerif4-Variable.woff2" as="font" type="font/woff2" crossorigin>
+<style>__STYLE__</style>
+</head>
+<body>
+<a class="skip-link" href="#research">Skip to the research loop</a>
+<header class="topbar">
+  <a class="brand" href="#top"><span class="brand-mark" aria-hidden="true">▦</span>LoopBlox</a>
+  <nav aria-label="Main navigation"><a href="#research">Research</a><a href="#components">Components</a><a href="#domains">Domain study</a><a href="#status">Status</a></nav>
+  <span class="edition">AN OPEN RESEARCH PROJECT</span>
+</header>
+<main id="top">
+  <section class="hero" aria-labelledby="site-title">
+    <span class="hero-mark" aria-hidden="true">▦</span>
+    <h1 id="site-title">LoopBlox<span class="cursor" aria-hidden="true">_</span></h1>
+    <p class="hero-title">Automatic research for <em>domain-specific</em> agent loops.</p>
+    <p class="hero-copy">Compose agent behaviors in Python. A research agent explores alternative loops,
+      scores them, and carries one selection into a held-out comparison.</p>
+    <div class="hero-actions">
+      <a class="btn primary" href="#research">The research loop</a>
+      <a class="btn" href="baseline.py" download>Download baseline.py</a>
+    </div>
+    <p class="hero-facts"><span>__COMPONENT_COUNT__ components</span><span>__FAMILY_COUNT__ families</span><span>τ²-bench retail + telecom</span><span>Domain study planned</span></p>
+  </section>
+
+  <section id="research" class="section" aria-labelledby="research-title">
+    <div class="section-head">
+      <span class="section-label">01 / The research process</span>
+      <h2 id="research-title">A loop for researching loops.</h2>
+      <p class="section-intro">Edit a reusable controller, run development trials, let the evidence choose what to try next.</p>
+      <button class="motion-toggle" aria-pressed="false">Pause motion Ⅱ</button>
+    </div>
+    <figure class="panel diagram-shell">
+      <div class="panel-bar"><span>▸ research-process</span><span class="dim">illustration</span></div>
+      <div class="diagram-scroll" tabindex="0" role="region" aria-label="Research process, scroll horizontally on smaller screens">
+        <svg class="flow-diagram research-diagram" viewBox="0 0 1320 330" width="1320" height="330" role="img" aria-labelledby="research-svg-title research-svg-desc">
+          <title id="research-svg-title">LoopBlox automatic research process</title>
+          <desc id="research-svg-desc">Freeze the episode and run the supplied baseline. A researcher may save candidates, request development evaluations, inspect evidence, and select scored candidates. It can repeat this process. Close research and freeze selections before evaluating holdout tasks.</desc>
+          <defs><marker id="arrow" markerWidth="8" markerHeight="8" refX="7" refY="4" orient="auto" markerUnits="userSpaceOnUse"><path d="M 1 1 L 7 4 L 1 7" fill="none" stroke="#a6d7c7"/></marker><marker id="amber-arrow" markerWidth="8" markerHeight="8" refX="7" refY="4" orient="auto" markerUnits="userSpaceOnUse"><path d="M 1 1 L 7 4 L 1 7" fill="none" stroke="#e4bc80"/></marker></defs>
+          <path class="scope-line" d="M 370 78 V 63 H 915 V 78"/>
+          <text class="scope-label" x="642" y="43" text-anchor="middle">RESEARCH AGENT / DEVELOPMENT TASKS</text>
+          <path class="wire" marker-end="url(#arrow)" d="M 88 151 H 248 M 272 151 H 433 M 457 151 H 618 M 642 151 H 803 M 827 151 H 993 M 1017 151 H 1202"/>
+          <path class="pulse" d="M 88 151 H 1202"/>
+          <path class="wire return-wire" marker-end="url(#arrow)" d="M 827 151 H 898 Q 918 151 918 171 V 273 Q 918 293 898 293 H 375 Q 355 293 355 273 V 171 Q 355 151 375 151 H 433"/>
+          <path class="pulse" d="M 827 151 H 898 Q 918 151 918 171 V 273 Q 918 293 898 293 H 375 Q 355 293 355 273 V 171 Q 355 151 375 151 H 433"/>
+          <text class="path-label" x="630" y="282" text-anchor="middle">REVISE USING DEVELOPMENT EVIDENCE</text>
+          <path class="freeze-line" d="M 1093 93 V 240"/>
+          <text class="small-label amber" x="1108" y="89">RESEARCH CLOSED</text>
+          <g class="flow-node"><rect x="76" y="145" width="12" height="12"/><text class="node-index" x="82" y="126">01</text><text x="82" y="189"><tspan x="82">Freeze</tspan><tspan x="82" dy="23">the episode</tspan></text><text class="node-note" x="82" y="238">Scope + conditions</text></g>
+          <g class="flow-node"><rect x="254" y="145" width="12" height="12"/><text class="node-index" x="260" y="126">02</text><text x="260" y="189"><tspan x="260">Run the</tspan><tspan x="260" dy="23">baseline</tspan></text><text class="node-note" x="260" y="238">Initial selection</text></g>
+          <g class="flow-node"><rect x="439" y="145" width="12" height="12"/><text class="node-index" x="445" y="126">03</text><text x="445" y="189"><tspan x="445">Save a</tspan><tspan x="445" dy="23">candidate</tspan></text><text class="node-note" x="445" y="238">Python + rationale</text></g>
+          <g class="flow-node"><rect x="624" y="145" width="12" height="12"/><text class="node-index" x="630" y="126">04</text><text x="630" y="189"><tspan x="630">Evaluate</tspan><tspan x="630" dy="23">task runs</tspan></text><text class="node-note" x="630" y="238">Paired development trials</text></g>
+          <g class="flow-node"><rect x="809" y="145" width="12" height="12"/><text class="node-index" x="815" y="126">05</text><text x="815" y="189"><tspan x="815">Inspect</tspan><tspan x="815" dy="23">the evidence</tspan></text><text class="node-note" x="815" y="238">Outcomes + traces + cost</text></g>
+          <g class="flow-node checkpoint"><path d="M 1005 142 L 1014 151 L 1005 160 L 996 151 Z"/><text class="node-index" x="1005" y="126">06</text><text x="1005" y="189"><tspan x="1005">Freeze</tspan><tspan x="1005" dy="23">the selection</tspan></text><text class="node-note" x="1005" y="238">Baseline stays eligible</text></g>
+          <g class="flow-node"><rect x="1208" y="145" width="12" height="12"/><text class="node-index" x="1214" y="126">07</text><text x="1214" y="189"><tspan x="1214">Compare</tspan><tspan x="1214" dy="23">on holdout</tspan></text><text class="node-note" x="1214" y="238">Unseen task groups</text></g>
+        </svg>
+      </div>
+      <figcaption class="panel-foot"><span><i class="legend-line"></i>A typical research cycle; search actions can be interleaved.</span><span>ILLUSTRATION / NOT A LIVE RUN</span></figcaption>
+    </figure>
+    <figure class="panel tree-shell">
+      <div class="panel-bar"><span>▸ candidate-lineage</span><span class="dim">animated illustration</span></div>
+      <div class="diagram-scroll" tabindex="0" role="region" aria-label="How a loop evolves, scroll horizontally on smaller screens">
+        <svg class="tree-diagram" viewBox="0 0 1240 430" width="1240" height="430" role="img" aria-labelledby="tree-svg-title tree-svg-desc">
+          <title id="tree-svg-title">How a loop evolves during research</title>
+          <desc id="tree-svg-desc">The supplied baseline branches into saved candidate loops, each changing one behavior. Scored candidates branch again into revisions. Branches that are not selected stay in the record. One loop is frozen when research closes and goes to the holdout comparison. The changes shown are an illustration, not a recorded run.</desc>
+          <g class="tree-cycle">
+            <text class="lane-label" x="100" y="24">BASELINE</text>
+            <text class="lane-label" x="390" y="24">CANDIDATES</text>
+            <text class="lane-label" x="680" y="24">REVISIONS</text>
+            <text class="lane-label" x="940" y="24">FROZEN</text>
+            <text class="lane-label" x="1150" y="24">HOLDOUT</text>
+            <g class="pruned">
+              <path class="tree-edge e1" pathLength="1" d="M 112 212 H 384"/>
+              <path class="tree-edge e1" pathLength="1" d="M 112 212 H 250 Q 270 212 270 232 V 335 Q 270 355 290 355 H 384"/>
+              <g class="tree-node b"><rect x="384" y="206" width="12" height="12"/><text x="390" y="250">Trim the results</text><text class="node-note" x="390" y="270">keep less in history</text></g>
+              <g class="tree-node b"><rect x="384" y="349" width="12" height="12"/><text x="390" y="393">Summarize history</text><text class="node-note" x="390" y="413">compress what it sees</text></g>
+              <path class="tree-edge e2" pathLength="1" d="M 402 70 H 674"/>
+              <path class="tree-edge e2" pathLength="1" d="M 402 212 H 560 Q 580 212 580 232 V 240 Q 580 260 600 260 H 674"/>
+              <path class="tree-edge e2" pathLength="1" d="M 402 355 H 674"/>
+              <g class="tree-node c"><rect x="674" y="64" width="12" height="12"/><text x="680" y="108">Diagnose failures</text><text class="node-note" x="680" y="128">learn from mistakes</text></g>
+              <g class="tree-node c"><rect x="674" y="254" width="12" height="12"/><text x="680" y="298">Run a fixed rule</text><text class="node-note" x="680" y="318">skip the model</text></g>
+              <g class="tree-node c"><rect x="674" y="349" width="12" height="12"/><text x="680" y="393">Split the task</text><text class="node-note" x="680" y="413">work in subtasks</text></g>
+            </g>
+            <g class="kept">
+              <path class="tree-edge e1 lit" pathLength="1" d="M 112 212 H 250 Q 270 212 270 192 V 90 Q 270 70 290 70 H 384"/>
+              <path class="tree-edge e2 lit" pathLength="1" d="M 402 70 H 560 Q 580 70 580 90 V 145 Q 580 165 600 165 H 674"/>
+              <path class="tree-edge e3 lit" pathLength="1" d="M 692 165 H 922"/>
+              <path class="tree-edge e4 lit" pathLength="1" d="M 958 165 H 1138"/>
+              <path class="pulse tree-pulse" d="M 112 212 H 250 Q 270 212 270 192 V 90 Q 270 70 290 70 H 384 M 402 70 H 560 Q 580 70 580 90 V 145 Q 580 165 600 165 H 674 M 692 165 H 922 M 958 165 H 1138"/>
+              <g class="tree-node a"><rect x="94" y="206" width="12" height="12"/><text x="100" y="250">Baseline</text><text class="node-note" x="100" y="270">the supplied loop</text></g>
+              <g class="tree-node b"><rect x="384" y="64" width="12" height="12"/><text x="390" y="108">Plan first</text><text class="node-note" x="390" y="128">write a plan, then act</text></g>
+              <g class="tree-node c"><rect x="674" y="159" width="12" height="12"/><text x="680" y="203">Check the reasoning</text><text class="node-note" x="680" y="223">review before acting</text></g>
+              <g class="tree-node d frozen"><path class="mark" d="M 940 153 L 952 165 L 940 177 L 928 165 Z"/><text x="940" y="203">Selection</text><text class="node-note" x="940" y="223">research closes</text></g>
+              <g class="tree-node e"><rect x="1138" y="159" width="12" height="12"/><text x="1144" y="203">Holdout</text><text class="node-note" x="1144" y="223">unseen tasks</text></g>
+            </g>
+          </g>
+        </svg>
+      </div>
+      <figcaption class="panel-foot"><span><i class="legend-line"></i>Branches that are not selected stay in the record.</span><span>ILLUSTRATION / NOT A RECORDED RUN</span></figcaption>
+    </figure>
+    <div class="feature-grid">
+      <div class="feature-card"><h3>Search</h3><p>Order, repetition, branches — ordinary Python. The episode fixes components, tools, model settings, and limits.</p></div>
+      <div class="feature-card"><h3>Evidence</h3><p>Immutable source, paired task results, traces, and cost. Only scored candidates can be selected.</p></div>
+      <div class="feature-card"><h3>Holdout</h3><p>Researchers close and selections freeze first. Final scores never feed back into search.</p></div>
+    </div>
+  </section>
+
+  <section id="components" class="section" aria-labelledby="components-title">
+    <div class="section-head">
+      <span class="section-label">02 / What the researcher composes</span>
+      <h2 id="components-title">One reusable loop. Explicit behaviors.</h2>
+      <p class="section-intro">A Loop is the control flow for a whole task. The same composition handles new instances; task-specific decisions emerge at run time.</p>
+      <span class="section-count">__COMPONENT_COUNT__ components / __FAMILY_COUNT__ families</span>
+    </div>
+    <div class="install-box"><h3>The shared starting point</h3><a class="link-out" href="baseline.py" download>Download baseline.py ↓</a></div>
+    <figure class="panel diagram-shell baseline-shell">
+      <div class="panel-bar"><span>▸ reactive.py</span><span class="dim">task loop</span></div>
+      <div class="diagram-scroll" tabindex="0" role="region" aria-label="Reactive baseline task loop, scroll horizontally on smaller screens">
+        <svg class="flow-diagram baseline-diagram" viewBox="0 0 1180 288" width="1180" height="288" role="img" aria-labelledby="baseline-svg-title baseline-svg-desc">
+          <title id="baseline-svg-title">The reactive baseline task loop</title>
+          <desc id="baseline-svg-desc">Gather the whole history, then think and choose: one tool action, or a proposal that the task is done. For an action, run the tool and record the full result, then gather the history again. A completion proposal returns from the controller. Authoritative scoring occurs after the worker closes.</desc>
+          <path class="wire" marker-end="url(#arrow)" d="M 72 153 H 234 M 250 153 H 460 M 484 153 H 694 M 710 153 H 920"/>
+          <path class="pulse" d="M 72 153 H 932"/>
+          <path class="wire return-wire" marker-end="url(#arrow)" d="M 939 153 H 1020 Q 1040 153 1040 173 V 243 Q 1040 263 1020 263 H 185 Q 165 263 165 243 V 173 Q 165 153 185 153 H 234"/>
+          <path class="pulse" d="M 939 153 H 1020 Q 1040 153 1040 173 V 243 Q 1040 263 1020 263 H 185 Q 165 263 165 243 V 173 Q 165 153 185 153 H 234"/>
+          <path class="wire branch-wire" marker-end="url(#amber-arrow)" d="M 472 144 V 65 Q 472 45 492 45 H 1080 Q 1100 45 1100 65 V 141"/>
+          <text class="path-label amber" x="790" y="34" text-anchor="middle">COMPLETION PROPOSED</text>
+          <text class="path-label" x="585" y="252" text-anchor="middle">NEXT ITERATION / REFRESH THE EVIDENCE</text>
+          <text class="small-label" x="585" y="135" text-anchor="middle">ACTION SELECTED</text>
+          <g class="flow-node"><rect x="60" y="147" width="12" height="12"/><text x="66" y="192">Task</text><text class="node-note" x="66" y="216">the request</text></g>
+          <g class="flow-node"><rect x="236" y="147" width="12" height="12"/><text x="242" y="192">Full history</text><text class="node-note" x="242" y="216">everything so far</text></g>
+          <g class="flow-node checkpoint"><path d="M 472 144 L 481 153 L 472 162 L 463 153 Z"/><text x="472" y="192">Think and choose</text><text class="node-note" x="472" y="216">one action, or done</text></g>
+          <g class="flow-node"><rect x="696" y="147" width="12" height="12"/><text x="702" y="192">Run the tool</text><text class="node-note" x="702" y="216">the chosen action</text></g>
+          <g class="flow-node"><rect x="926" y="147" width="12" height="12"/><text x="932" y="192">Full result</text><text class="node-note" x="932" y="216">kept in the history</text></g>
+          <g class="flow-node checkpoint"><rect x="1094" y="147" width="12" height="12"/><text x="1100" y="192">Return</text><text class="node-note" x="1100" y="216">the loop ends</text></g>
+        </svg>
+      </div>
+      <figcaption class="panel-foot"><span>The whole history in, one chosen action out, the full result recorded.</span><span>TASK LOOP / reactive.py</span></figcaption>
+    </figure>
+    <div class="composition-note"><p>Research can swap in a different context strategy, planning, review, or recovery. The host keeps isolation, factual history, budgets, and scoring.</p><details class="source-disclosure"><summary>Read the baseline Python</summary><pre><code>__BASELINE__</code></pre></details></div>
+    <div class="family-grid">__FAMILIES__</div>
+    <div id="component-detail" class="component-detail" aria-live="polite"><div><span class="eyebrow">Component contracts</span><h3 class="prompt">Choose a behavior to read its contract.</h3></div><p>Families organize the catalog. Python decides which components run, in what order, under which conditions.</p><a class="link-out" href="component-contracts.md" download>Download contracts ↓</a></div>
+  </section>
+
+  <section id="domains" class="section" aria-labelledby="domains-title">
+    <div class="section-head">
+      <span class="section-label">03 / The first domain study</span>
+      <h2 id="domains-title">Specialist loops, shared evaluation.</h2>
+      <p class="section-intro">With one model and one component library: can a loop researched for a single domain beat the baseline, and beat a loop researched across both, on unseen tasks?</p>
+      <span class="section-count">τ²-bench / retail + telecom</span>
+    </div>
+    <figure class="panel diagram-shell">
+      <div class="panel-bar"><span>▸ domain-study</span><span class="dim">planned</span></div>
+      <div class="diagram-scroll" tabindex="0" role="region" aria-label="Domain study design, scroll horizontally on smaller screens">
+        <svg class="flow-diagram domain-diagram" viewBox="0 0 1320 398" width="1320" height="398" role="img" aria-labelledby="domain-svg-title domain-svg-desc">
+          <title id="domain-svg-title">Retail, telecom, and mixed-domain search share a final comparison</title>
+          <desc id="domain-svg-desc">All three searches start from the same reactive baseline. Each produces a selected loop, which may retain the baseline. All researchers close before comparison. Evaluate the baseline and all three selections on identical retail and telecom holdout tasks. Branches show study conditions, not parallel scheduling.</desc>
+          <path class="wire" marker-end="url(#arrow)" d="M 115 180 H 204 Q 224 180 224 160 V 87 Q 224 67 244 67 H 386 M 115 180 H 386 M 115 180 H 204 Q 224 180 224 200 V 273 Q 224 293 244 293 H 386"/>
+          <path class="pulse" d="M 115 180 H 204 Q 224 180 224 160 V 87 Q 224 67 244 67 H 386 M 115 180 H 386 M 115 180 H 204 Q 224 180 224 200 V 273 Q 224 293 244 293 H 386"/>
+          <path class="wire" marker-end="url(#arrow)" d="M 406 67 H 685 M 406 180 H 685 M 406 293 H 685"/>
+          <path class="pulse" d="M 406 67 H 685 M 406 180 H 685 M 406 293 H 685"/>
+          <path class="wire" d="M 705 67 H 870 Q 890 67 890 87 V 160 Q 890 180 910 180 H 978 M 705 180 H 978 M 705 293 H 870 Q 890 293 890 273 V 200 Q 890 180 910 180 H 978"/>
+          <path class="pulse" d="M 705 67 H 870 Q 890 67 890 87 V 160 Q 890 180 910 180 H 978 M 705 180 H 978 M 705 293 H 870 Q 890 293 890 273 V 200 Q 890 180 910 180 H 978"/>
+          <path class="wire" marker-end="url(#arrow)" d="M 1002 180 H 1206"/>
+          <path class="pulse" d="M 1002 180 H 1206"/>
+          <path class="wire baseline-wire" marker-end="url(#arrow)" d="M 109 189 V 350 Q 109 370 129 370 H 1258 Q 1278 370 1278 350 V 200 Q 1278 180 1258 180 H 1230"/>
+          <text class="path-label" x="655" y="359" text-anchor="middle">THE UNIFIED BASELINE JOINS THE SAME COMPARISON</text>
+          <g class="flow-node"><rect x="103" y="174" width="12" height="12"/><text x="109" y="141"><tspan x="109">Reactive</tspan><tspan x="109" dy="23">baseline</tspan></text></g>
+          <g class="flow-node"><rect x="390" y="61" width="12" height="12"/><text x="396" y="45">Retail search</text><text class="node-note" x="396" y="97">Transaction state changes</text></g>
+          <g class="flow-node"><rect x="390" y="174" width="12" height="12"/><text x="396" y="158">Telecom search</text><text class="node-note" x="396" y="210">Troubleshooting</text></g>
+          <g class="flow-node"><rect x="390" y="287" width="12" height="12"/><text x="396" y="271">Mixed search</text><text class="node-note" x="396" y="323">Both domains</text></g>
+          <g class="flow-node"><rect x="689" y="61" width="12" height="12"/><text x="695" y="45">Retail selection</text></g>
+          <g class="flow-node"><rect x="689" y="174" width="12" height="12"/><text x="695" y="158">Telecom selection</text></g>
+          <g class="flow-node"><rect x="689" y="287" width="12" height="12"/><text x="695" y="271">Mixed selection</text></g>
+          <g class="flow-node checkpoint"><path d="M 990 170 L 1000 180 L 990 190 L 980 180 Z"/><text x="990" y="218"><tspan x="990">Freeze all</tspan><tspan x="990" dy="23">selections</tspan></text><text class="node-note" x="990" y="267">Research closes</text></g>
+          <g class="flow-node"><rect x="1212" y="174" width="12" height="12"/><text x="1218" y="218"><tspan x="1218">Paired</tspan><tspan x="1218" dy="23">holdout</tspan></text><text class="node-note" x="1218" y="267">Retail + telecom</text></g>
+        </svg>
+      </div>
+      <figcaption class="panel-foot"><span>Branches show research conditions. A selection may keep the original baseline.</span><span>PLANNED DOMAIN STUDY</span></figcaption>
+    </figure>
+    <div class="study-notes"><p>The mixed search gets both specialist budgets combined. All four entries face the same held-out tasks, specialists included cross-domain.</p><p>Report complete task success and total cost, research spend kept separate. Attempts and failures stay in the record.</p></div>
+  </section>
+
+  <section id="status" class="section status-section" aria-labelledby="status-title">
+    <div class="section-head">
+      <span class="section-label">04 / Current status</span>
+      <h2 id="status-title">The research loop runs.<br>The domain question is still open.</h2>
+    </div>
+    <div class="status-copy"><p>Small live runs have exercised autonomous research, selection, accounting, and evaluation after research closes. Formal domain experiments have not started; no optimization gain has been established.</p><dl><div><dt>First domain study</dt><dd>Audited τ²-bench retail and telecom subsets.</dd></div><div><dt>Mechanism checks</dt><dd>TextWorld remains a small verification environment.</dd></div><div><dt>Next artifact direction</dt><dd>SpreadsheetBench 2 modeling and debugging; integration pending.</dd></div></dl></div>
+  </section>
+</main>
+<footer class="page-foot"><a class="brand" href="#top">LoopBlox</a><span>COMPOSABLE BEHAVIORS / VERIFIABLE TASKS / AUTOMATIC RESEARCH</span><a class="link-out" href="component-contracts.md" download>Component reference ↓</a></footer>
+<script type="application/json" id="component-data">__DATA__</script>
+<script>__APP__</script>
+</body>
+</html>

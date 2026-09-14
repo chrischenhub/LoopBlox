@@ -1,0 +1,14 @@
+{
+  "question": "Compare reusable Python Loops composed directly from context, proposal, assessment and action subcomponents. Search optional planning and completion review together with context and observation choices. Evaluate complete task outcomes and total cost; do not attribute joint changes to one component.",
+  "exposed": {
+    "context_full": {},
+    "context_recent": {},
+    "context_summary": {},
+    "plan": {},
+    "think_decide": {},
+    "critique": {},
+    "execute": {},
+    "observe_full": {},
+    "observe_brief": {}
+  }
+}

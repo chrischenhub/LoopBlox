@@ -1,0 +1,19 @@
+{
+  "question": "Discover a reusable control Loop for the frozen retail/telecom task condition. Use the same approved components, model and total per-task budget, including simulated-user model calls. Domain-specialist searches will be compared with the initial baseline and a mixed-domain search with the combined specialist search budget. The selected Python controller must generalize to held-out scenario groups. Improve complete-task success and total cost; do not encode development customers, orders, diagnoses or answers. The environment supplies the applicable policy, tools and customer messages at runtime; intermediate plans are task-specific outputs of a reusable Loop.",
+  "exposed": {
+    "context_full": {},
+    "context_recent": {},
+    "context_summary": {},
+    "think": {},
+    "decompose": {},
+    "plan": {},
+    "critique": {},
+    "reflect": {},
+    "decide": {},
+    "think_decide": {},
+    "execute": {},
+    "execute_rule": {},
+    "observe_full": {},
+    "observe_brief": {}
+  }
+}
