@@ -33,6 +33,8 @@ def prepare(args):
         raise ValueError('Use a development-only suite; this pilot does not run holdout')
     if args.count < args.top or min(args.top, args.batch, args.deep_runs) < 1:
         raise ValueError('Require count >= top and positive batch/deep-run budgets')
+    if args.batch > len(manifest['tasks']):
+        raise ValueError('The batch requires more distinct tasks than the development suite contains')
     experiment = read(ROOT / 'experiments/tau2.json')
     candidates = generate_candidates(experiment['exposed'], args.count, args.seed)
     client = ChatCompletionsClient.from_env()
@@ -68,8 +70,8 @@ def prepare(args):
         ranking='Fully scored candidates: descending passes, ascending model calls, input tokens, '
                 'output tokens, then frozen generation order. Baseline is a separate reference.',
         design='Ten (or configured count) source-frozen random candidates share a complete development batch '
-               'with the unified baseline. Uniform sampling with replacement follows ResearchSession; '
-               'repeated draws do not add independent task groups. An opening baseline trial is charged separately. '
+               'with the unified baseline. Each evaluation samples distinct tasks uniformly without replacement; '
+               'separate evaluations may reuse tasks. An opening baseline trial is charged separately. '
                'The top candidates start fresh, serial researchers with equal budgets and source-only inheritance. '
                'Each branch has its own baseline/start opening pair, then the specified additional development '
                'allowance. Screening evidence is not exported as completed research experience. '
@@ -96,6 +98,8 @@ def prepare_dfs(args):
     manifest = load_suite(source / 'suite')
     if any(task['split'] != 'development' for task in manifest['tasks']):
         raise ValueError('DFS pilot uses only development tasks')
+    if args.batch > len(manifest['tasks']):
+        raise ValueError('The batch requires more distinct tasks than the development suite contains')
     if digest(BASELINE_CONTROLLER.read_bytes()) != old['baseline_sha256']:
         raise ValueError('Keep the same unified baseline')
     root.mkdir(parents=True, exist_ok=False)
@@ -535,7 +539,7 @@ def report(root):
                     lines += ['', f"Failure: {names.get(row['candidate_id'], 'baseline')} / {row['task_id']}: "
                               f"{row.get('stop_reason', row['status'])}. Elapsed: {row.get('elapsed_seconds')} seconds. "
                               'The missing score and reserved usage are retained.']
-        lines += ['', f"Draws (repeats retained): {screening.get('draws', [])}"]
+        lines += ['', f"Sampled tasks: {screening.get('draws', [])}"]
         if screening.get('error'):
             lines += ['', 'Stopped: ' + screening['error']]
     lines += ['', '## Research branches', '']

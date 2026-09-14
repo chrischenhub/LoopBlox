@@ -241,7 +241,7 @@ class ResearchSession:
         self.state = dict(status="prepared", candidates=[], evaluations=[], proposals=[], selected=None, task_runs_used=0)
         atomic_json(self.private / "setup.json", {
             **setup, "development": development, "holdout": holdout, "seed": seed,
-            "sampling": "uniform_with_replacement; freeze all candidates, draw one complete shared batch, "
+            "sampling": "uniform_without_replacement_per_evaluation; freeze all candidates, draw one complete shared batch, "
                         "repeat with fresh workers/environments; rotate candidate order by draw plus repeat",
             "research_budgets": {**self.budgets, "task_runs": max_task_runs},
             "task_limits": vars(task_limits), "worker_image": worker_image, "components": catalog(),
@@ -397,6 +397,9 @@ class ResearchSession:
         sources = {candidate_id: self.source(candidate_id) for candidate_id in candidate_ids}
         if type(n) is not int or n < 1 or type(repeats) is not int or repeats < 1:
             self.reject("n and repeats must be positive integers")
+        if n > len(self.development):
+            self.reject(f"Requested {n} distinct tasks; only {len(self.development)} development tasks exist. "
+                        "No draws or runs were started.")
         count = n * repeats * len(candidate_ids)
         remaining = self.max_task_runs - self.state["task_runs_used"]
         if count > remaining:
@@ -406,7 +409,7 @@ class ResearchSession:
         directory.mkdir()
         for candidate_id, source in sources.items():
             atomic_text(directory / "sources" / f"{candidate_id}.py", source)
-        sampled = [self.random.choice(self.development) for _ in range(n)]
+        sampled = self.random.sample(self.development, n)
         rows = []
         for draw, task_id in enumerate(sampled):
             for repeat in range(repeats):
@@ -518,12 +521,13 @@ class ResearchSession:
                  "return the existing candidate ID with created=false; its original source and rationale stay unchanged. "
                  "Re-evaluate an existing ID to gather more evidence for the same code.",
                  CANDIDATE_SCHEMA, "mutate", self.save_candidate),
-            Tool("evaluate", "Compare frozen candidates on the same n host-sampled tasks, each repeated repeats times "
+            Tool("evaluate", "Compare frozen candidates on the same n distinct tasks sampled uniformly without replacement "
+                 "within this evaluation. Separate evaluations may reuse tasks. Each task runs repeats times "
                  "(default 1). First candidate is the control. Costs n * repeats * number of candidates task runs. "
                  "Returns paired outcomes/costs and factual trace-summary paths. All attempts cost budget. "
                  "Infrastructure or verifier faults stop research; ordinary task failures remain valid results.",
                  object_schema({"candidate_ids": {"type": "array", "items": {"type": "string"}, "minItems": 1},
-                                "n": {"type": "integer", "minimum": 1},
+                                "n": {"type": "integer", "minimum": 1, "maximum": len(self.development)},
                                 "repeats": {"type": "integer", "minimum": 1}}, ["candidate_ids", "n"]), "test", self.evaluate),
             Tool("select", "Choose a candidate with a scored development result (pass or fail). Last selection survives exhaustion.",
                  object_schema({"candidate_id": {"type": "string"}}), "mutate", self.select),

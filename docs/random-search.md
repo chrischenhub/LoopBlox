@@ -24,7 +24,7 @@ PYTHONPATH=.artifacts/tau2/random-001/implementation \
 
 `prepare` 不请求模型，但会检查模型配置、Docker 和冻结依赖，保存候选及实现副本。`run` 才开始模型调用。`PYTHONPATH` 指向冻结的 implementation，`-P` 防止当前工作目录中的源码优先加载；命令仍从仓库根目录执行，以读取本地 `.env`。生成器从已开放组件中抽取上下文、决策、观察、规划、复核和反思等组合，生成不同的普通 Python 源码，不读取题目答案。
 
-筛选需要 1 次开场 baseline，以及 11 个 controller × 5 次共享抽样，共预留 56 次题目运行。抽样有放回，所以“5 次”可能包含重复题。完整评分的候选按通过数排序，平分时依次比较模型调用、输入／输出 token 和生成顺序；baseline 单独作为参考。缺分保留且不参与排名。
+筛选需要 1 次开场 baseline，以及 11 个 controller × 5 次共享抽样，共预留 56 次题目运行。同一批不放回抽样，因此每个 controller 运行 5 道不同题；开发题池少于 5 道时在准备阶段拒绝。各 controller 共享这 5 道题。完整评分的候选按通过数排序，平分时依次比较模型调用、输入／输出 token 和生成顺序；baseline 单独作为参考。缺分保留且不参与排名。
 
 Top 3 各自启动新研究器，先跑 baseline 和起点的开场配对，再获得 `--deep-runs` 次开发运行额度。这里是自由局部研究，还没有强制 DFS 顺序。预算及模型设置以新 campaign 的 `protocol.json` 为准；不要编辑已冻结的协议来改变正在进行的实验。
 
@@ -73,4 +73,4 @@ PYTHONPATH=.artifacts/tau2/dfs-recovery-001/implementation \
 
 定时恢复需要运行者另行授权及外部调度器；CLI 不会自行创建计时器。可选择仅对实际 `service_not_ready` 等待至少 14 分钟后恢复。429 / `rate_limit` 和其他错误不能套用这个条件，正常运行期间也不周期性重启。长实验应放在由运行者管理的持久终端或进程服务中；临时命令会话的关闭可能终止调度。
 
-2026-09-13～14 保留的旧 campaign 使用整理前的平铺目录，仍应通过其原始 `implementation/run_random_search.py` 入口恢复。上述模块命令用于新目录结构创建的 campaign；不要替换旧 campaign 的实现副本或协议。
+2026-09-13～14 保留的旧 campaign 使用整理前的平铺目录，仍应通过其原始 `implementation/run_random_search.py` 入口恢复。旧冻结实现仍包含本轮已确认的有放回抽样错误；原样恢复不能视为落实了不放回要求。要使用修正后的采样规则，必须创建新实验，不能将新旧结果合并成同一个无偏差实验。不要替换旧 campaign 的实现副本或协议。

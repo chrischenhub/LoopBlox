@@ -319,7 +319,10 @@ help, reconsider the explanation and the available design choices. Additional
 components and more varied designs are useful only if results justify them.
 
 `evaluate(candidate_ids, n, repeats=1)` freezes every listed candidate before the
-host draws a complete batch of `n` tasks uniformly with replacement. The first
+host draws a complete batch of `n` distinct tasks uniformly without replacement.
+`n` must not exceed the number of development tasks; an oversized request is
+rejected before saving an evaluation or consuming randomness. Separate evaluations
+may reuse tasks. The first
 candidate is the control. Every candidate runs on every draw and repeat in a
 fresh environment and worker; order rotates by draw plus repeat. The request
 requires `len(candidate_ids) * n * repeats` remaining development runs. A singleton
@@ -328,7 +331,7 @@ uses one development run. Candidate IDs must be unique.
 
 For example, `evaluate(candidate_ids=["c0000", "c0001"], n=2, repeats=2)` requests
 eight runs and returns four paired comparisons. Pairing uses draw and repeat;
-duplicate draws cannot overwrite earlier results. Repeats measure variability,
+explicit repeats cannot overwrite earlier results. Repeats measure variability,
 not additional independent scenarios. Identical task seeds do not guarantee
 identical model or simulated-user behavior. Failed, interrupted and unscored
 runs remain in the records; missing outcomes are not losses or wins. Unknown

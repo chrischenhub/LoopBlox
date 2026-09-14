@@ -138,7 +138,11 @@ The trusted HTTP transport process is separate from the isolated candidate worke
    duplicates reuse the existing ID and original rationale; further evaluations
    use that ID. Do not enforce a fixed research sequence or novelty quota.
 4. Freeze all candidates in an evaluation before drawing the complete shared
-   development batch uniformly with replacement from the recorded host seed.
+   development batch uniformly without replacement from the recorded host seed.
+   Each evaluation contains `n` distinct tasks; reject `n` larger than the available
+   development set before creating evaluation artifacts or consuming randomness.
+   Separate evaluations may reuse tasks. Explicit `repeats` repeats a chosen task
+   and is distinct from sampling it twice within the batch.
    Run each candidate on each draw and repeat with fresh environments/workers,
    rotating order by draw plus repeat. Pair by draw and repeat, not task ID alone.
    Repeats do not add independent task groups. Preallocate all planned runs;
