@@ -4,7 +4,7 @@ Engineering and experiment policy, updated 2026-09-14.
 
 - [README.md](README.md) owns the project goal, current status and next milestone.
 - [loop.md](loop.md) alone owns Harness, Loop, Component, Invocation and experiment boundary definitions.
-- `components.py` owns executable component contracts; `COMPONENTS.md` is generated.
+- `loopblox/runtime/components.py` owns executable component contracts; `COMPONENTS.md` is generated.
 - [CONTROLLER.md](CONTROLLER.md) explains the current controller API to the researcher.
 
 ## 1. Product and research object
@@ -12,7 +12,7 @@ Engineering and experiment policy, updated 2026-09-14.
 Build an open-source experiment environment for componentizing harness behavior,
 comparing compositions on verifiable tasks, and automatically searching for better
 Loops. Visualization explains components, candidate changes and observed execution.
-TextWorld remains a mechanism check. The first domain study uses audited τ²-bench
+TextWorld is retired. The current domain study uses audited τ²-bench
 retail/telecom subsets, with specialist and mixed-domain search as specified in
 README.md. SpreadsheetBench 2 modeling/debugging is the subsequent artifact-task
 direction; it is not integrated yet.
@@ -33,14 +33,14 @@ experiment over a website editor, a universal taxonomy or full harness replicati
 Reuse the existing host model/tool gateways and isolated worker. Every component
 needs a meaningful behavioral contract. Serialization, logging and transport are
 implementation details. Preserve real model-call boundaries when explaining or
-changing a composition; inspect `components.py` for current behavior and costs.
+changing a composition; inspect `loopblox/runtime/components.py` for current behavior and costs.
 
-`components.py` owns the four capability families, subcomponent membership,
+`loopblox/runtime/components.py` owns the four capability families, subcomponent membership,
 identities, descriptions, parameters, allowed reference categories, fixed prompts,
 output schemas and behavior. Each public subcomponent carries its frozen `family`
 metadata (id, label, description). Families organize the catalog; they are not
 callable stages, reference types, permissions or an execution order. Regenerate `COMPONENTS.md`
-with `python3 -B components.py --markdown`; do not hand-edit it. Episode JSON and
+with `python3 -B -m loopblox.runtime.components --markdown`; do not hand-edit it. Episode JSON and
 Markdown catalogs derive from the same independently narrowed component definitions.
 Reference categories are API types, not Harness layers.
 
@@ -66,7 +66,7 @@ a recorded component boundary.
 
 The model proposes actions or completion; the controller owns continuation and
 final return. Decide's canonical actions/completion union is `decision_schema` in
-`components.py`. Empty actions are not completion. A proposal or component return
+`loopblox/runtime/components.py`. Empty actions are not completion. A proposal or component return
 does not end the worker; only outer `run(env)` return normally ends the task.
 Limits, interruptions and failures retain distinct statuses. A completion proposal
 is not hidden verification. Current decisions concern the whole task; `tool_filter`
@@ -85,7 +85,7 @@ not erase originals. Python helpers do not add synthetic component-result histor
 
 Record invocation IDs, parent IDs, arguments, results, statuses, timing and order.
 Record actual model attempts and tool requests with their owning invocation IDs.
-`trace_report.py` derives its report from those facts and the frozen catalog; it
+`loopblox/report.py` derives its report from those facts and the frozen catalog; it
 must not invent unexecuted branches or count parent summaries on top of child cost.
 
 Model actions have immutable arguments and host-assigned IDs, each attempted at
@@ -123,7 +123,7 @@ The trusted HTTP transport process is separate from the isolated candidate worke
    default injected guide; examples do not define the episode's search boundary.
 2. Run one supplied baseline trial and initially select that baseline. The host
    supplies its source explicitly. Standard studies and fixed comparisons share
-   `study.BASELINE_CONTROLLER`, pointing to `controllers/reactive.py`: direct
+   `loopblox.experiments.study.BASELINE_CONTROLLER`, pointing to `controllers/reactive.py`: direct
    composition with full context and full observations. Fixed comparisons always include this
    baseline; additional mechanism controls cannot replace it. Label an optional
    matched mechanism comparison `control` to retain its own paired report.
@@ -233,9 +233,9 @@ development-run allowances. Independent research repeats and mechanism ablations
 remain protocol decisions. A smoke run is not a research gain; a single trial or
 trace does not establish a winner or causal effect.
 
-TextWorld is integrated through `textworld_benchmark.py` and `run_textworld.py`.
-τ² uses `tau2_benchmark.py` and `run_tau2.py`; both reuse `study.py` and
-`ResearchSession`, with no parallel research engine. Pin official source, data and
+τ² uses `loopblox/benchmarks/tau2.py` and `loopblox/benchmarks/run_tau2.py`, reusing
+`loopblox/experiments/study.py` and `ResearchSession`. Do not restore the retired
+TextWorld adapter or add a parallel research engine. Pin official source, data and
 dependencies. Audit each task's actual reward basis and empty-trajectory result
 before selection; group related variants and exclude integration groups from the
 main dataset. Frozen task files take precedence over upstream summary prose.
@@ -261,7 +261,7 @@ stored as text. A proposal is not executable or approved merely because it exist
 compiles or was written by the researcher.
 
 Humans review definitions and implementations, then incorporate accepted components
-into `components.py` for a new library condition and episode. Never mutate an active
+into `loopblox/runtime/components.py` for a new library condition and episode. Never mutate an active
 experiment's library. Ordinary composition search needs no approval.
 
 ## 6. Four-harness evidence
@@ -289,12 +289,22 @@ research. Its SVG illustrations explain research, the supplied reactive task loo
 and the planned domain study; they do not execute controllers or depict live runs.
 The parent README and loop.md own direction, status and definitions. The website
 uses explicit snapshots; component families/contracts and baseline source derive
-from components.py and controllers/reactive.py. Refresh snapshots with
+from loopblox/runtime/components.py and controllers/reactive.py. Refresh snapshots with
 `python3 site/build.py --refresh-notes`, then review the English summaries against
 the canonical documents. The four-harness atlas is retired from the current website. Current builds must not
 publish retired pages.
 
 ## 7. Engineering
+
+Python implementation lives under `loopblox/`: runtime, research, experiments and
+benchmarks. `controllers/` contains complete Loop sources; root `experiments/`
+contains JSON conditions. Run CLIs as modules from the source root. Do not add
+root-level forwarding scripts or import-path compatibility shims.
+`loopblox/__init__.py` owns the source root and implementation snapshot operation.
+Snapshots preserve package paths, controller sources, conditions and documentation.
+Campaign children must import the frozen package, even when launched from the
+mutable checkout. Old campaigns retain their original entry points and sources;
+use those frozen implementations for their recovery.
 
 Build the smallest complete slice. Each rule, schema and state transition has one
 semantic owner; derive or explicitly snapshot other representations. Reuse execution,

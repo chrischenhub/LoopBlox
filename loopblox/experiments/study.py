@@ -7,13 +7,14 @@ from pathlib import Path
 import shutil
 import time
 
-from autoresearch import ResearchSession, summarize, validate_experiment
-from controller_runtime import Limits, ModelMeter, model_usage
-from loopblox import ChatCompletionsClient
-from runtime_io import atomic_json, atomic_text, digest, image_id
+from loopblox import ROOT, snapshot_implementation
+from loopblox.research.session import ResearchSession, summarize, validate_experiment
+from loopblox.runtime.controller import Limits, ModelMeter, model_usage
+from loopblox.runtime.model import ChatCompletionsClient
+from loopblox.runtime.io import atomic_json, atomic_text, digest, image_id
 
-HERE = Path(__file__).resolve().parent
-BASELINE_CONTROLLER = HERE / "controllers" / "reactive.py"
+
+BASELINE_CONTROLLER = ROOT / "controllers" / "reactive.py"
 
 
 def model_settings(client):
@@ -34,7 +35,7 @@ def comparison_plan(candidates, tasks, repeats=1):
     return rows
 
 
-def run_study(args, *, load_suite, runner_factory, extra_sources=(), include_mixed=False, extra_setup=None):
+def run_study(args, *, load_suite, runner_factory, include_mixed=False, extra_setup=None):
     original_suite = Path(args.suite).resolve()
     manifest = load_suite(original_suite)
     families = list(dict.fromkeys(task["family"] for task in manifest["tasks"]))
@@ -62,9 +63,7 @@ def run_study(args, *, load_suite, runner_factory, extra_sources=(), include_mix
                         + ("Mixed-domain search has the sum of the per-domain search budgets and development-run allowances."
                            if include_mixed else "Independent per-family searches use equal research budgets."))
     atomic_json(private / "setup.json", setup)
-    implementation_sources = ("study.py", *extra_sources)
-    for name in implementation_sources:
-        atomic_text(private / "implementation" / name, (HERE / name).read_text())
+    snapshot_implementation(private)
     atomic_text(output / "controllers/baseline.py", baseline)
     state = dict(status="researching", title=f"Reusable Loop search · {manifest['environment']}",
                  families=families, setup=setup, episodes={}, comparisons=[],
@@ -118,8 +117,6 @@ def run_study(args, *, load_suite, runner_factory, extra_sources=(), include_mix
                 research_model_calls=args.research_model_calls * factor, task_limits=limits, seed=args.seed + index,
             )
             sessions[condition] = session
-            for name in implementation_sources:
-                atomic_text(session.private / "implementation" / name, (private / "implementation" / name).read_text())
             print("Searching reusable Loop: " + condition, flush=True)
             session.research()
             source = (session.output / "selected-controller.py").read_text()

@@ -14,19 +14,19 @@ from dataclasses import asdict, dataclass
 from pathlib import Path
 from typing import Any
 
-from components import (
+from loopblox.runtime.components import (
     RECENT_TURNS, brief_observation, capability_kinds, catalog,
     decision_schema, definition, validate,
 )
-from loopblox import (
+from loopblox.runtime.model import (
     BudgetExhausted, HostFault, OperationalProblem, Tool, ToolResult,
     _PROVIDER_STOP_CODES, _TRANSIENT_CODES, usage_tokens,
 )
-from runtime_io import atomic_json, run_process
-from trace_report import write_trace_report
+from loopblox.runtime.io import atomic_json, run_process
+from loopblox.report import write_trace_report
 
 
-WORKER = Path(__file__).with_name("controller_worker.py")
+WORKER = Path(__file__).with_name("worker.py")
 WORKER_SOURCE = WORKER.read_text()
 MAX_WIRE_BYTES = 2 * 1024 * 1024
 MAX_SOURCE_BYTES = 128 * 1024

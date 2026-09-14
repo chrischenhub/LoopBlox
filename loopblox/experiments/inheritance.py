@@ -3,61 +3,23 @@
 import argparse
 import json
 import math
-import os
 from pathlib import Path
+from loopblox import ROOT, snapshot_implementation
+from loopblox.experiments.common import read, run_stage, verify, clients
 import shutil
-import signal
-import subprocess
 import sys
 import time
 
-from autoresearch import ResearchSession, export_experience, research_evidence
-from components import catalog
-from controller_runtime import Limits, model_usage
-from loopblox import ChatCompletionsClient
-from runtime_io import atomic_json, atomic_text, digest, image_id
-from study import BASELINE_CONTROLLER, model_settings
-from tau2_benchmark import Tau2Runner, load_suite
+from loopblox.research.session import ResearchSession, export_experience, research_evidence
+from loopblox.runtime.components import catalog
+from loopblox.runtime.controller import Limits, model_usage
+from loopblox.runtime.model import ChatCompletionsClient
+from loopblox.runtime.io import atomic_json, atomic_text, digest, image_id
+from loopblox.experiments.study import BASELINE_CONTROLLER, model_settings
+from loopblox.benchmarks.tau2 import Tau2Runner, load_suite
 
 
-HERE = Path(__file__).resolve().parent
 CONDITIONS = ("independent", "loop", "loop_memory")
-
-
-def read(path):
-    return json.loads(Path(path).read_text())
-
-
-def run_stage(arguments):
-    """Give the serial child time to persist interruption and release its workers."""
-    process = subprocess.Popen(arguments, start_new_session=True)
-    try:
-        return process.wait()
-    except KeyboardInterrupt:
-        previous = signal.signal(signal.SIGINT, signal.SIG_IGN)
-        try:
-            try:
-                os.killpg(process.pid, signal.SIGINT)
-            except ProcessLookupError:
-                pass
-            try:
-                process.wait(timeout=30)
-            except subprocess.TimeoutExpired:
-                os.killpg(process.pid, signal.SIGKILL)
-                process.wait()
-        finally:
-            signal.signal(signal.SIGINT, previous)
-        raise
-
-
-def snapshot_implementation(root):
-    sources = sorted([*HERE.glob("*.py"), *(HERE / "controllers").glob("*.py"),
-                      *(HERE / name for name in ("AGENTS.md", "README.md", "CONTROLLER.md", "loop.md", "COMPONENTS.md"))])
-    for path in sources:
-        target = root / "implementation" / path.relative_to(HERE)
-        target.parent.mkdir(parents=True, exist_ok=True)
-        shutil.copyfile(path, target)
-    return {str(path.relative_to(HERE)): digest(path.read_bytes()) for path in sources}
 
 
 def episode_budget(protocol, item):
@@ -78,8 +40,8 @@ def prepare_resume(source, root):
     for name, sha in protocol["implementation_sha256"].items():
         if digest((source / "implementation" / name).read_bytes()) != sha:
             raise ValueError("Original frozen implementation changed: " + name)
-        if name not in {"loopblox.py", "controller_runtime.py", "run_inheritance.py", "run_tau2.py", "AGENTS.md", "README.md"}:
-            if digest((HERE / name).read_bytes()) != sha:
+        if name not in {"loopblox/runtime/model.py", "loopblox/runtime/controller.py", "loopblox/experiments/inheritance.py", "loopblox/experiments/common.py", "loopblox/benchmarks/run_tau2.py", "AGENTS.md", "README.md"}:
+            if digest((ROOT / name).read_bytes()) != sha:
                 raise ValueError("Recovery must preserve the research instructions, component library and environment: " + name)
     if digest((source / "suite/manifest.json").read_bytes()) != protocol["suite_manifest_sha256"]:
         raise ValueError("Original frozen manifest changed")
@@ -163,7 +125,7 @@ def prepare_resume(source, root):
 
 
 def prepare(args):
-    from run_tau2 import user_client
+    from loopblox.benchmarks.run_tau2 import user_client
     if args.rounds < 2:
         raise ValueError("Inheritance requires at least two rounds")
     manifest = load_suite(args.suite)
@@ -228,32 +190,6 @@ def prepare(args):
     return root
 
 
-def verify(root):
-    protocol = read(root / "protocol.json")
-    for name, expected in protocol["implementation_sha256"].items():
-        if digest((root / "implementation" / name).read_bytes()) != expected:
-            raise ValueError("Frozen implementation changed: " + name)
-    if HERE != root / "implementation":
-        raise ValueError("Run the frozen implementation, not the mutable checkout")
-    if digest((root / "suite/manifest.json").read_bytes()) != protocol["suite_manifest_sha256"]:
-        raise ValueError("Frozen task manifest changed")
-    for name, expected in protocol.get("recovery", {}).get("imported_files", {}).items():
-        if digest((root / name).read_bytes()) != expected:
-            raise ValueError("An imported research record changed: " + name)
-    load_suite(root / "suite")
-    return protocol
-
-
-def clients(protocol):
-    from run_tau2 import user_client
-    client = ChatCompletionsClient.from_env()
-    user = user_client(argparse.Namespace(user_model=protocol["user_model"]["model"],
-                        user_output_allowance=protocol["user_model"]["max_tokens"]), client)
-    if model_settings(client) != protocol["model"] or model_settings(user) != protocol["user_model"]:
-        raise ValueError("Model settings differ from the frozen protocol")
-    return client, user
-
-
 def episode(root, label):
     protocol = verify(root)
     item = next(e for e in protocol["episodes"] if e["label"] == label)
@@ -311,7 +247,7 @@ def episode(root, label):
 
 
 def check(root):
-    from run_tau2 import compare
+    from loopblox.benchmarks.run_tau2 import compare
     protocol = verify(root)
     clients(protocol)
     if any(read(root / item["directory"] / "result.json")["status"] != "complete" for item in protocol["episodes"]):
@@ -364,7 +300,7 @@ def run(root):
                 atomic_json(root / "result.json", state)
                 report(root)
                 print(f"Starting {item['label']} (fresh researcher, at most {episode_budget(protocol, item)['task_runs']} task runs)", flush=True)
-                exit_code = run_stage([sys.executable, "-B", str(HERE / "run_inheritance.py"), "episode", str(root), item["label"]])
+                exit_code = run_stage([sys.executable, "-P", "-B", "-m", "loopblox.experiments.inheritance", "episode", str(root), item["label"]])
                 path = root / item["directory"] / "result.json"
                 item.update(status="complete" if exit_code == 0 else "interrupted", exit_code=exit_code)
                 if path.exists():
@@ -377,7 +313,7 @@ def run(root):
         if all(item["status"] == "complete" for item in state["episodes"]):
             state["status"] = "training_check"
             atomic_json(root / "result.json", state)
-            exit_code = run_stage([sys.executable, "-B", str(HERE / "run_inheritance.py"), "check", str(root)])
+            exit_code = run_stage([sys.executable, "-P", "-B", "-m", "loopblox.experiments.inheritance", "check", str(root)])
             state["status"] = "complete" if exit_code == 0 else "interrupted"
         else:
             state["status"] = "incomplete"
@@ -464,7 +400,7 @@ def report(root):
             usage=usage, cumulative_usage=model_usage(chain_calls[item["condition"]]),
             experience_reads=memory_reads, training_passes=score, best_submitted_training_passes=best[item["condition"]]))
     search_usage = model_usage(calls)
-    from run_tau2 import comparison_calls
+    from loopblox.benchmarks.run_tau2 import comparison_calls
     check_calls = comparison_calls(root / "training-check")
     check_runs = sum(row["status"] != "not_started" for row in comparison.get("comparisons", []))
     analysis = dict(status=state["status"], episodes=rows, research_task_runs=total_runs, training_check_runs=check_runs,
@@ -513,7 +449,8 @@ if __name__ == "__main__":
             parser.error("resume requires --from-campaign")
         prepare_resume(args.from_campaign, root)
         if not args.prepare_only:
-            raise SystemExit(run_stage([sys.executable, "-B", str(root / "implementation/run_inheritance.py"), "run", str(root)]))
+            raise SystemExit(run_stage([sys.executable, "-P", "-B", "-m", "loopblox.experiments.inheritance", "run", str(root)],
+                                      source_root=root / "implementation"))
     elif args.command == "episode":
         episode(root, args.label)
     else:

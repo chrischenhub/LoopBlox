@@ -6,8 +6,8 @@ from html import escape
 import json
 from pathlib import Path
 
-from loopblox import usage_tokens
-from runtime_io import atomic_text
+from loopblox.runtime.model import usage_tokens
+from loopblox.runtime.io import atomic_text
 
 
 def summarize_trace(record):

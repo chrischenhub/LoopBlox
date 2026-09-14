@@ -4,9 +4,9 @@ import ast
 import copy
 from dataclasses import replace
 
-from autoresearch import ResearchSession
-from components import catalog, validate
-from runtime_io import atomic_json
+from loopblox.research.session import ResearchSession
+from loopblox.runtime.components import catalog, validate
+from loopblox.runtime.io import atomic_json
 
 
 def check_component_calls(source, exposed):

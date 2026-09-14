@@ -15,7 +15,7 @@
 
 ## 任务环境
 
-τ²-bench 固定在官方 [672227c6b6676edc20d57ea53b7000262aae77b9](https://github.com/sierra-research/tau2-bench/tree/672227c6b6676edc20d57ea53b7000262aae77b9)，安装时使用该版本的锁文件。TextWorld 版本固定为 1.7.0，安装定义在 [Dockerfile](../environments/textworld/Dockerfile)。两者均独立获取，保留各自上游许可；LoopBlox 的 MIT 许可证不替代上游的许可。
+τ²-bench 固定在官方 [672227c6b6676edc20d57ea53b7000262aae77b9](https://github.com/sierra-research/tau2-bench/tree/672227c6b6676edc20d57ea53b7000262aae77b9)，安装时使用该版本的锁文件。τ² 依赖独立获取，保留上游许可；LoopBlox 的 MIT 许可证不替代上游的许可。
 
 ## 随仓库分发的字体
 

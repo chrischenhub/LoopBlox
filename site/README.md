@@ -13,7 +13,7 @@ boundaries; they are illustrations, never executable controllers or live traces.
 
 - The parent `README.md` owns the project direction, study question, and status.
 - The parent `loop.md` owns the definitions and experiment boundaries.
-- `components.py` owns the component catalog. Family membership, descriptions,
+- `loopblox/runtime/components.py` owns the component catalog. Family membership, descriptions,
   contracts, and counts are generated from its frozen JSON catalog.
 - `build.py` owns `PLAIN_NAMES`, the plain-language label shown for each component in
   the diagrams, family lists, and contract panel. The identifiers stay visible beside

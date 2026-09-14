@@ -6,12 +6,13 @@ from pathlib import Path
 import shutil
 import sys
 
-from components import catalog
-from controller_runtime import Limits, ModelMeter, model_usage
-from loopblox import ChatCompletionsClient
-from runtime_io import atomic_json, atomic_text, digest, image_id
-from study import BASELINE_CONTROLLER, comparison_plan, model_settings, run_study, write_report
-from tau2_benchmark import HERE, Tau2Runner, load_suite, prepare_suite
+from loopblox import ROOT, snapshot_implementation
+from loopblox.runtime.components import catalog
+from loopblox.runtime.controller import Limits, ModelMeter, model_usage
+from loopblox.runtime.model import ChatCompletionsClient
+from loopblox.runtime.io import atomic_json, atomic_text, digest, image_id
+from loopblox.experiments.study import BASELINE_CONTROLLER, comparison_plan, model_settings, run_study, write_report
+from loopblox.benchmarks.tau2 import Tau2Runner, load_suite, prepare_suite
 
 
 def user_client(args, agent):
@@ -60,9 +61,7 @@ def compare(args, *, controllers=None, previous=None):
     output.mkdir(parents=True, exist_ok=previous is not None)
     private = output / "private"
     shutil.copytree(args.suite, private / "suite")
-    for name in ("components.py", "controller_runtime.py", "controller_worker.py", "loopblox.py", "runtime_io.py",
-                 "trace_report.py", "tau2_benchmark.py", "run_tau2.py", "study.py", "loop.md", "CONTROLLER.md"):
-        atomic_text(private / "implementation" / name, (HERE / name).read_text())
+    snapshot_implementation(private)
     exposed = {name: {} for name in catalog()}
     setup = dict(model=model_settings(client), user_model=model_settings(user), task_limits=vars(limits),
                  worker_image=worker, environment_manifest=manifest, exposed=exposed,
@@ -78,7 +77,7 @@ def compare(args, *, controllers=None, previous=None):
                  families=families,
                  candidates={}, episodes={}, comparisons=[])
     for name, filename in controllers:
-        source = (HERE / "controllers" / filename).read_text()
+        source = (ROOT / "controllers" / filename).read_text()
         path = "controllers/" + name + ".py"
         atomic_text(output / path, source)
         state["candidates"][name] = dict(source=path, sha256=digest(source.encode()))
@@ -135,7 +134,7 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__)
     commands = parser.add_subparsers(dest="command", required=True)
     prepare = commands.add_parser("prepare", help="Audit and freeze disjoint groups without model calls")
-    prepare.add_argument("--source", default=str(HERE / ".artifacts/upstream/tau2-bench"))
+    prepare.add_argument("--source", default=str(ROOT / ".artifacts/upstream/tau2-bench"))
     prepare.add_argument("--output", required=True)
     prepare.add_argument("--development", type=int, default=18)
     prepare.add_argument("--holdout", type=int, default=18)
@@ -152,7 +151,7 @@ def main():
             run.add_argument("--task-" + name.replace("_", "-"), type=type(value), default=value)
         if command in {"study", "inherit"}:
             if command == "study":
-                run.add_argument("--experiment", default=str(HERE / "experiments/tau2.json"))
+                run.add_argument("--experiment", default=str(ROOT / "experiments/tau2.json"))
             run.add_argument("--seed", type=int, default=0)
             run.add_argument("--development-runs", type=int, default=8)
             run.add_argument("--research-seconds", type=float, default=3600)
@@ -178,18 +177,19 @@ def main():
     elif args.command == "compare":
         compare(args)
     elif args.command == "inherit":
-        from run_inheritance import prepare, run_stage
+        from loopblox.experiments.inheritance import prepare
+        from loopblox.experiments.common import run_stage
         output = prepare(args)
         if not args.prepare_only:
-            raise SystemExit(run_stage([sys.executable, "-B", str(output / "implementation/run_inheritance.py"),
-                                        "run", str(output)]))
+            raise SystemExit(run_stage([sys.executable, "-P", "-B", "-m", "loopblox.experiments.inheritance",
+                                        "run", str(output)], source_root=output / "implementation"))
     else:
         agent = ChatCompletionsClient.from_env()
         user = user_client(args, agent)
         run_study(args, load_suite=load_suite,
                   runner_factory=lambda suite, manifest, client, worker, limits, private: Tau2Runner(
                       suite, manifest, client, user, worker, limits, private / "environments"),
-                  extra_sources=("run_tau2.py", "tau2_benchmark.py"), include_mixed=True,
+                  include_mixed=True,
                   extra_setup={"user_model": model_settings(user)})
 
 

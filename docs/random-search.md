@@ -6,23 +6,23 @@
 
 先按照 [τ² 环境安装](running.md) 固定上游版本、安装其独立 Python 环境并准备 Docker；填写根目录 `.env`。
 
-通用 `run_tau2.py prepare` 会生成 development 与 holdout 两个划分。随机搜索入口要求 manifest 中只有 development，因此不能直接传入通用 suite。当前入口不提供单独选择开发子集的 CLI；运行者需先在宿主侧准备并冻结 development-only suite，记录它的来源、分组和选择规则，保留文件校验值，不能将 holdout 重新标记为 development。
+通用 `python -m loopblox.benchmarks.run_tau2 prepare` 会生成 development 与 holdout 两个划分。随机搜索入口要求 manifest 中只有 development，因此不能直接传入通用 suite。当前入口不提供单独选择开发子集的 CLI；运行者需先在宿主侧准备并冻结 development-only suite，记录它的来源、分组和选择规则，保留文件校验值，不能将 holdout 重新标记为 development。
 
 以下命令中的 `.artifacts/tau2/development-001` 指这份已经准备好的 suite，新 clone 不包含它。本次保留的 BFS／DFS campaign 各有完整冻结 suite，可在本地用于后续开发实验。正式实验仍需另行冻结数据协议。
 
 ## 2. 冻结 10 个随机起点并筛选 Top 3
 
 ```sh
-.artifacts/upstream/tau2-bench/.venv/bin/python -B run_random_search.py prepare \
+.artifacts/upstream/tau2-bench/.venv/bin/python -B -m loopblox.experiments.search prepare \
   .artifacts/tau2/random-001 --suite .artifacts/tau2/development-001 \
   --seed 20260913 --count 10 --batch 5 --top 3 --deep-runs 20
 
-.artifacts/upstream/tau2-bench/.venv/bin/python -B \
-  .artifacts/tau2/random-001/implementation/run_random_search.py run \
+PYTHONPATH=.artifacts/tau2/random-001/implementation \
+.artifacts/upstream/tau2-bench/.venv/bin/python -P -B -m loopblox.experiments.search run \
   .artifacts/tau2/random-001
 ```
 
-`prepare` 不请求模型，但会检查模型配置、Docker 和冻结依赖，保存候选及实现副本。`run` 才开始模型调用。生成器从已开放组件中抽取上下文、决策、观察、规划、复核和反思等组合，生成不同的普通 Python 源码，不读取题目答案。
+`prepare` 不请求模型，但会检查模型配置、Docker 和冻结依赖，保存候选及实现副本。`run` 才开始模型调用。`PYTHONPATH` 指向冻结的 implementation，`-P` 防止当前工作目录中的源码优先加载；命令仍从仓库根目录执行，以读取本地 `.env`。生成器从已开放组件中抽取上下文、决策、观察、规划、复核和反思等组合，生成不同的普通 Python 源码，不读取题目答案。
 
 筛选需要 1 次开场 baseline，以及 11 个 controller × 5 次共享抽样，共预留 56 次题目运行。抽样有放回，所以“5 次”可能包含重复题。完整评分的候选按通过数排序，平分时依次比较模型调用、输入／输出 token 和生成顺序；baseline 单独作为参考。缺分保留且不参与排名。
 
@@ -33,12 +33,12 @@ Top 3 各自启动新研究器，先跑 baseline 和起点的开场配对，再�
 只有起始分支全部完成提交，才能创建 DFS campaign：
 
 ```sh
-.artifacts/upstream/tau2-bench/.venv/bin/python -B run_random_search.py dfs \
+.artifacts/upstream/tau2-bench/.venv/bin/python -B -m loopblox.experiments.search dfs \
   .artifacts/tau2/dfs-001 .artifacts/tau2/random-001 \
   --seed 20260914 --nodes 6 --depth 3 --batch 5
 
-.artifacts/upstream/tau2-bench/.venv/bin/python -B \
-  .artifacts/tau2/dfs-001/implementation/run_random_search.py run \
+PYTHONPATH=.artifacts/tau2/dfs-001/implementation \
+.artifacts/upstream/tau2-bench/.venv/bin/python -P -B -m loopblox.experiments.search run \
   .artifacts/tau2/dfs-001
 ```
 
@@ -50,7 +50,8 @@ Top 3 各自启动新研究器，先跑 baseline 和起点的开场配对，再�
 
 ```sh
 # 只从已有记录生成报告，不请求模型
-python3 -B .artifacts/tau2/dfs-001/implementation/run_random_search.py report \
+PYTHONPATH=.artifacts/tau2/dfs-001/implementation \
+python3 -P -B -m loopblox.experiments.search report \
   .artifacts/tau2/dfs-001
 ```
 
@@ -59,15 +60,17 @@ python3 -B .artifacts/tau2/dfs-001/implementation/run_random_search.py report \
 出现错误后先确认故障类型并关闭旧进程。明确决定恢复时，使用原 campaign 的冻结入口创建新目录，再从新实现启动：
 
 ```sh
-.artifacts/upstream/tau2-bench/.venv/bin/python -B \
-  .artifacts/tau2/dfs-001/implementation/run_random_search.py resume \
+PYTHONPATH=.artifacts/tau2/dfs-001/implementation \
+.artifacts/upstream/tau2-bench/.venv/bin/python -P -B -m loopblox.experiments.search resume \
   .artifacts/tau2/dfs-recovery-001 .artifacts/tau2/dfs-001
 
-.artifacts/upstream/tau2-bench/.venv/bin/python -B \
-  .artifacts/tau2/dfs-recovery-001/implementation/run_random_search.py run \
+PYTHONPATH=.artifacts/tau2/dfs-recovery-001/implementation \
+.artifacts/upstream/tau2-bench/.venv/bin/python -P -B -m loopblox.experiments.search run \
   .artifacts/tau2/dfs-recovery-001
 ```
 
 恢复保留已经提交的分支，未完成分支从新研究器开始，扣除此前任务、模型、输出和时间开销。它不会继续旧 Python 调用栈或重放已执行工具。若需要修改实现，应在新 campaign 中明确记录变更，不能改写历史来源。
 
 定时恢复需要运行者另行授权及外部调度器；CLI 不会自行创建计时器。可选择仅对实际 `service_not_ready` 等待至少 14 分钟后恢复。429 / `rate_limit` 和其他错误不能套用这个条件，正常运行期间也不周期性重启。长实验应放在由运行者管理的持久终端或进程服务中；临时命令会话的关闭可能终止调度。
+
+2026-09-13～14 保留的旧 campaign 使用整理前的平铺目录，仍应通过其原始 `implementation/run_random_search.py` 入口恢复。上述模块命令用于新目录结构创建的 campaign；不要替换旧 campaign 的实现副本或协议。

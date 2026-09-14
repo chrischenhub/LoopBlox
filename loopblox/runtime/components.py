@@ -442,8 +442,8 @@ def render_contracts(component_catalog):
     """Render either the full catalog or an episode's already narrowed catalog."""
     lines = [
         "# Component contracts", "",
-        "Generated from `components.py`; do not edit this document independently. "
-        "Regenerate the repository reference with `python3 -B components.py --markdown > COMPONENTS.md`. "
+        "Generated from `loopblox/runtime/components.py`; do not edit this document independently. "
+        "Regenerate the repository reference with `python3 -B -m loopblox.runtime.components --markdown > COMPONENTS.md`. "
         "Episode copies are generated from that episode's exposed, narrowed catalog.", "",
         "These are current executable contracts, not a universal Harness taxonomy. "
         "Concepts and composition boundaries are defined in `loop.md`. The JSON catalog retains "

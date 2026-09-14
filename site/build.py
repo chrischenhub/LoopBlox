@@ -13,7 +13,7 @@ import sys
 ROOT = Path(__file__).resolve().parent
 SNAPSHOTS = ROOT / 'snapshots'
 
-# Plain-language names for a general audience. The catalog in components.py owns the
+# Plain-language names for a general audience. The catalog in loopblox/runtime/components.py owns the
 # components; these labels are presentation only and are checked against it on every build.
 PLAIN_NAMES = {
     'context_full': 'Full history',
@@ -40,7 +40,7 @@ def build(refresh_notes=False):
                                ('controllers/reactive.py', 'reactive.py')]:
             shutil.copyfile(ROOT.parent / source, SNAPSHOTS / target)
         for args, target in [([], 'components.json'), (['--markdown'], 'component-contracts.md')]:
-            result = subprocess.check_output([sys.executable, '-B', str(ROOT.parent / 'components.py'), *args])
+            result = subprocess.check_output([sys.executable, '-B', '-m', 'loopblox.runtime.components', *args], cwd=ROOT.parent)
             (SNAPSHOTS / target).write_bytes(result)
 
     catalog = json.loads((SNAPSHOTS / 'components.json').read_text())

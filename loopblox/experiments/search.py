@@ -8,18 +8,19 @@ import shutil
 import sys
 import time
 
-from autoresearch import ResearchSession, export_experience, research_evidence
-from controller_runtime import Limits, ModelMeter, model_usage
-from loopblox import ChatCompletionsClient
-from random_loops import generate_candidates
-from run_inheritance import clients, run_stage, snapshot_implementation, verify
-from run_tau2 import user_client
-from runtime_io import atomic_json, atomic_text, digest, image_id
-from study import BASELINE_CONTROLLER, model_settings
-from tau2_benchmark import Tau2Runner, load_suite
+from loopblox import ROOT, snapshot_implementation
+from loopblox.research.session import ResearchSession, export_experience, research_evidence
+from loopblox.runtime.controller import Limits, ModelMeter, model_usage
+from loopblox.runtime.model import ChatCompletionsClient
+from loopblox.research.sampling import generate_candidates
+from loopblox.experiments.common import clients, run_stage, verify
+from loopblox.benchmarks.run_tau2 import user_client
+from loopblox.runtime.io import atomic_json, atomic_text, digest, image_id
+from loopblox.experiments.study import BASELINE_CONTROLLER, model_settings
+from loopblox.benchmarks.tau2 import Tau2Runner, load_suite
 
 
-HERE = Path(__file__).resolve().parent
+
 
 
 def read(path):
@@ -32,7 +33,7 @@ def prepare(args):
         raise ValueError('Use a development-only suite; this pilot does not run holdout')
     if args.count < args.top or min(args.top, args.batch, args.deep_runs) < 1:
         raise ValueError('Require count >= top and positive batch/deep-run budgets')
-    experiment = read(HERE / 'experiments/tau2.json')
+    experiment = read(ROOT / 'experiments/tau2.json')
     candidates = generate_candidates(experiment['exposed'], args.count, args.seed)
     client = ChatCompletionsClient.from_env()
     user = user_client(argparse.Namespace(user_model=None, user_output_allowance=2048), client)
@@ -181,9 +182,9 @@ def prepare_resume(source, root):
     for name, expected in protocol['implementation_sha256'].items():
         if digest((source / 'implementation' / name).read_bytes()) != expected:
             raise ValueError('Original frozen implementation changed: ' + name)
-        current = digest((HERE / name).read_bytes())
-        if name not in {'loopblox.py', 'controller_runtime.py', 'autoresearch.py',
-                        'controllers/research.py', 'run_random_search.py', 'AGENTS.md', 'README.md'}:
+        current = digest((ROOT / name).read_bytes())
+        if name not in {'loopblox/runtime/model.py', 'loopblox/runtime/controller.py', 'loopblox/research/session.py',
+                        'controllers/research.py', 'loopblox/experiments/search.py', 'AGENTS.md', 'README.md'}:
             if current != expected:
                 raise ValueError('Recovery must retain the library, environment and instructions: ' + name)
         if current != expected:
@@ -321,7 +322,7 @@ def session_for(root, protocol, label, budget, starting=None):
     session_class = ResearchSession
     options = {}
     if dfs:
-        from dfs_research import DFSResearchSession
+        from loopblox.research.dfs import DFSResearchSession
         session_class = DFSResearchSession
         options = dict(dfs_policy=protocol['dfs'], experience=root / starting['experience'])
     return session_class(
@@ -443,7 +444,7 @@ def run(root):
         if not dfs and not protocol.get('recovery', {}).get('screening_reused'):
             state['status'] = 'screening'
             atomic_json(root / 'result.json', state)
-            if run_stage([sys.executable, '-B', str(HERE / 'run_random_search.py'), 'screen', str(root)]):
+            if run_stage([sys.executable, '-P', '-B', '-m', 'loopblox.experiments.search', 'screen', str(root)]):
                 raise RuntimeError('Screening stopped; later work was not dispatched')
         screening = read(root / 'screening/result.json') if not dfs else dict(status='complete', top=protocol['candidates'])
         state.update(status='researching', top=[e['name'] for e in screening['top']],
@@ -456,7 +457,7 @@ def run(root):
             item['status'] = 'running'
             atomic_json(root / 'result.json', state)
             print('Deepening ' + item['name'], flush=True)
-            exit_code = run_stage([sys.executable, '-B', str(HERE / 'run_random_search.py'), 'branch', str(root), item['name']])
+            exit_code = run_stage([sys.executable, '-P', '-B', '-m', 'loopblox.experiments.search', 'branch', str(root), item['name']])
             item.update(read(root / 'branches' / item['name'] / 'result.json'))
             atomic_json(root / 'result.json', state)
             report(root)

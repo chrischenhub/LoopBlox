@@ -54,7 +54,7 @@ comparison must freeze the internal options as well as component code.
 ## Supplied baseline and composition choices
 
 The host supplies the exact baseline source and evaluates it before research.
-Standard TextWorld and τ² studies use `study.BASELINE_CONTROLLER`, pointing to
+Standard τ² studies use `loopblox.experiments.study.BASELINE_CONTROLLER`, pointing to
 `controllers/reactive.py`:
 
 ```python
@@ -92,7 +92,7 @@ and option requirements against the episode catalog before using them.
 ## Capability families and subcomponents
 
 The four directory families are **Context / Evidence**, **Propose**, **Assess**,
-and **Act**. Their definitions and membership come from `components.py`; the
+and **Act**. Their definitions and membership come from `loopblox/runtime/components.py`; the
 frozen `component-contracts.md` groups only this episode's exposed subcomponents.
 Each `env.components[name]["family"]` contains `id`, `label`, and `description`.
 For example, a controller can inspect the available proposal components with:
@@ -122,7 +122,7 @@ state effects, return semantics and failures. `component-contracts.md` is genera
 from that same filtered catalog for reading; it cannot introduce additional options.
 The full library is recorded
 privately in setup and in run traces for explanation; visibility does not grant
-call permission. `components.py` owns family definitions and membership, prompts,
+call permission. `loopblox/runtime/components.py` owns family definitions and membership, prompts,
 schemas, and component behavior. The repository's `COMPONENTS.md` is the generated
 full-library reference, not an allowlist for every experiment. Parameter
 `reference_categories` are enforced by the host against completed invocation
@@ -163,7 +163,7 @@ not authoritative verification or permission to end the enclosing Loop.
 ## Decisions and termination
 
 `decide` and `think_decide` share the contract from
-`components.py::decision_schema`:
+`loopblox/runtime/components.py::decision_schema`:
 
 | Meaning | Returned value |
 | --- | --- |
@@ -225,7 +225,7 @@ D1 its direct component calls, and deeper positions expand component internals.
 Component and mechanism record types are shown separately; depth is not a fixed
 Harness layer or a permanent property of a component.
 Interrupted records survive; an abrupt host termination may leave JSON without
-an HTML report. Render recorded traces with `python3 trace_report.py <trace.json>`.
+an HTML report. Render recorded traces with `python3 loopblox/report.py <trace.json>`.
 
 ## Research and proposals
 
@@ -379,7 +379,7 @@ character offset (default 0); `limit` is a character count (default 32000, maxim
 128000), not a line or token count. Use returned `next_start` to paginate.
 Unknown usage stays unknown; incurred costs, failed
 attempts, and interruptions are retained. Every episode uses a new directory;
-Python continuations are not resumed. `run_textworld.py` and `run_tau2.py` connect
+Python continuations are not resumed. `loopblox/benchmarks/run_tau2.py` connects
 concrete environments to the same host-side `ResearchSession` and study runner.
 The τ² study freezes retail, telecom and mixed-domain selections before running
 any holdout; mixed search receives the sum of the specialist search budgets.

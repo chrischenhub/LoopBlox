@@ -2,7 +2,7 @@
 
 import random
 
-from components import catalog, validate
+from loopblox.runtime.components import catalog, validate
 
 
 def generate_candidates(exposed, count, seed):

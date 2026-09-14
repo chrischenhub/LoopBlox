@@ -54,7 +54,7 @@ Loop 的预期复用范围是一类任务。这里区分的是可复用的执行
 
 ### 3.1 能力类别与子组件
 
-当前组件库按四个 **family（能力类别）** 组织：Context / Evidence、Propose、Assess、Act。类别回答这项可调用行为主要提供什么能力；它不替代描述整个 Harness 的 surface，也不规定 Loop 的阶段或先后顺序。类别定义、说明和子组件归属由 `components.py` 唯一维护，成员与参数见生成的 [COMPONENTS.md](COMPONENTS.md#component-families)。
+当前组件库按四个 **family（能力类别）** 组织：Context / Evidence、Propose、Assess、Act。类别回答这项可调用行为主要提供什么能力；它不替代描述整个 Harness 的 surface，也不规定 Loop 的阶段或先后顺序。类别定义、说明和子组件归属由 `loopblox/runtime/components.py` 唯一维护，成员与参数见生成的 [COMPONENTS.md](COMPONENTS.md#component-families)。
 
 **Subcomponent（子组件）指目录中属于某个 family 的可调用 Component。** 这里的“子”表示目录归属，不代表它运行在一个父组件内部。family 不可调用、不创建 invocation、不产生额外成本，也不授予同类其他组件的权限。当前每个子组件声明一个主要目录类别；跨职责行为仍由其完整 contract 描述。例如执行测试是 Act 的工具行为，其结果可供 Assess 使用。
 
@@ -128,7 +128,7 @@ Loop exec level 是内部执行的总称，不是唯一固定深度。可以把�
 
 组件契约拥有内部行为；父 controller 拥有它的调用时机和返回后的转移。行为说明需要将职责、目标范围和接入位置映射到这份契约与具体调用处；无需另建一份竞争性的层级 schema。研究 agent 可以在批准范围内改变编排，不能通过伪造组件结果、修改固定提示词或读取隐藏评分扩展权限。
 
-当前逐组件的可执行契约由 `components.py` 唯一维护，包含 family 定义与归属、参数与结果 schema、引用类别、固定提示词，以及 `contract` 中的职责、范围、内部行为、调用成本语义、状态效果、返回和失败条件。宿主从参数 schema 读取允许的引用类别；这些类别是 API 结果类型，不是新的 Harness 层级。可读的 [COMPONENTS.md](COMPONENTS.md) 由目录生成，不独立定义组件行为。研究 episode 的 `component-contracts.md` 与 `components.json` 从同一份过滤目录生成，只列本次开放的组件与选项；内部源码可见仍不扩大修改边界。
+当前逐组件的可执行契约由 `loopblox/runtime/components.py` 唯一维护，包含 family 定义与归属、参数与结果 schema、引用类别、固定提示词，以及 `contract` 中的职责、范围、内部行为、调用成本语义、状态效果、返回和失败条件。宿主从参数 schema 读取允许的引用类别；这些类别是 API 结果类型，不是新的 Harness 层级。可读的 [COMPONENTS.md](COMPONENTS.md) 由目录生成，不独立定义组件行为。研究 episode 的 `component-contracts.md` 与 `components.json` 从同一份过滤目录生成，只列本次开放的组件与选项；内部源码可见仍不扩大修改边界。
 
 实验需要分别指出改变的是组件身份、调用者的触发与转移规则，还是组件允许的实现选项。还需检查实际信息可见性：例如当前完整上下文已包含先前分析产物，仅删除一个显式输入引用，并不保证消除了该产物的影响。契约使这些差别可检查，因果结论仍需要匹配的对照实验。
 
@@ -147,7 +147,7 @@ Loop exec level 是内部执行的总称，不是唯一固定深度。可以把�
 
 嵌套组件必须将完成建议与当前目标范围绑定，不能把“这个子目标完成了”自动升级成“可以回复用户了”。普通组件失败不等于最外层故障；能否恢复取决于明确的契约。中断和资源限制不能通过开启子组件来重置。
 
-当前 `decide` / `think_decide` 的输出是 `ActionsSelected(actions)` 或 `CompletionProposed(response)`。其 JSON 契约定义在 `components.py::decision_schema`，当前面向整个任务，尚无独立阶段目标与阶段完成 API。空动作列表不代表完成。`kind="completion_proposed"` 携带拟返回的 `response`，由调用者决定是否接受；该响应也可以说明实际阻塞。
+当前 `decide` / `think_decide` 的输出是 `ActionsSelected(actions)` 或 `CompletionProposed(response)`。其 JSON 契约定义在 `loopblox/runtime/components.py::decision_schema`，当前面向整个任务，尚无独立阶段目标与阶段完成 API。空动作列表不代表完成。`kind="completion_proposed"` 携带拟返回的 `response`，由调用者决定是否接受；该响应也可以说明实际阻塞。
 
 当前 controller 直接处理决策结果：可以接受完成提案，也可以将该决策 ID 作为 Critique 的 target，在拒绝后继续决策。普通 Python helper 可以组织这种循环，但不会产生额外工作结果或 `work` 引用类型。独立子目标与子任务完成契约仍未实现。
 
@@ -239,12 +239,12 @@ Python 保持 Loop 的唯一执行定义，批准组件代码拥有组件行为�
 ## 11. 当前实现边界
 
 - `controllers/*.py` 定义完整任务 controller，全部直接编排开放子组件；`reactive.py` 是统一基线，完成复核直接引用决策结果。
-- `components.py` 拥有四个 family 和 14 个子组件的归属与契约。当前带模型行为的子组件各使用一次逻辑模型调用，所有传输尝试独立计量；类别不新增调用或权限。
+- `loopblox/runtime/components.py` 拥有四个 family 和 14 个子组件的归属与契约。当前带模型行为的子组件各使用一次逻辑模型调用，所有传输尝试独立计量；类别不新增调用或权限。
 - AgentWork、`work` 引用及固定复合分发路径已移除。明确的独立子目标完成契约与子 agent 组件尚未实现。
 - 研究入口要求冻结 experiment 的问题、外层组件和离散选项；宿主强制限制候选调用，尚不支持任意内部位置的编辑约束。
 - 真实 invocation 包含父子关系；每次正常收尾生成 JSON 轨迹与只读可展开 HTML。它展示实际路径和固定实现，不推断未执行分支。
 - 当前 Decide 参数 `tool_filter` 过滤工具能力类别；`inspect_mutate` 选择检查与修改工具。所有取值都面向完整任务的完成建议。
 - 当前工具组串行执行；模型、权限、评分、预算与原始事实由宿主控制。
-- 研究调度通过宿主提供的任务运行函数连接环境。TextWorld 和 τ²-bench 已分别接入，共用 `ResearchSession` 与 `study.py`；领域路线和评分限制由 README 维护。SpreadsheetBench 2、Terminal-Bench 和原生四个 harness 的自动变体评测尚未接入。旧 SWE-bench 占位适配器与入口已清理。
+- 研究调度通过宿主提供的任务运行函数连接环境。当前接入 τ²-bench，使用 `ResearchSession` 与 `loopblox/experiments/study.py`；TextWorld 已退役；领域路线和评分限制由 README 维护。SpreadsheetBench 2、Terminal-Bench 和原生四个 harness 的自动变体评测尚未接入。旧 SWE-bench 占位适配器与入口已清理。
 
 后续开发应从一个明确行为变量的完整实验闭环开始：说明其职责、范围与不变量，选择已有组件或提出必要的新组件，再实现、记录和评测。本文的职责与范围描述不要求预先搭建通用嵌套引擎、注册系统、策略框架或图语言。

@@ -9,16 +9,17 @@ import shutil
 import time
 from pathlib import Path
 
-from components import catalog, object_schema, render_contracts, validate
-from controller_runtime import ControllerRuntime, Limits, MAX_SOURCE_BYTES, ModelMeter, WORKER_SOURCE
-from loopblox import HostFault, OperationalProblem, Tool, ToolResult
-from runtime_io import atomic_json, atomic_text, digest
-from trace_report import summarize_trace
+from loopblox import ROOT, snapshot_implementation
+from loopblox.runtime.components import catalog, object_schema, render_contracts, validate
+from loopblox.runtime.controller import ControllerRuntime, Limits, MAX_SOURCE_BYTES, ModelMeter
+from loopblox.runtime.model import HostFault, OperationalProblem, Tool, ToolResult
+from loopblox.runtime.io import atomic_json, atomic_text, digest
+from loopblox.report import summarize_trace
 
 
-HERE = Path(__file__).resolve().parent
-RESEARCH_CONTROLLER = HERE / "controllers" / "research.py"
-API_GUIDE = HERE / "CONTROLLER.md"
+
+RESEARCH_CONTROLLER = ROOT / "controllers" / "research.py"
+API_GUIDE = ROOT / "CONTROLLER.md"
 CANDIDATE_SCHEMA = object_schema({
     "source": {"type": "string", "description": "Complete Python source defining run(env)."},
     "rationale": {"type": "string", "description":
@@ -250,10 +251,10 @@ class ResearchSession:
         atomic_json(self.public / "components.json", exposed_catalog)
         atomic_text(self.public / "component-contracts.md", render_contracts(exposed_catalog))
         atomic_text(self.public / "controller-api.md", self.api_guide)
-        atomic_text(self.public / "loop.md", (HERE / "loop.md").read_text())
+        atomic_text(self.public / "loop.md", (ROOT / "loop.md").read_text())
         examples = self.public / "examples"
         examples.mkdir()
-        example_sources = sorted(path for path in (HERE / "controllers").glob("*.py")
+        example_sources = sorted(path for path in (ROOT / "controllers").glob("*.py")
                                  if path.name != RESEARCH_CONTROLLER.name and path.read_text() != baseline_source)
         for path in example_sources:
             atomic_text(examples / path.name, path.read_text())
@@ -262,13 +263,8 @@ class ResearchSession:
                     "Exact source snapshots for API usage, not a recommended search sequence. "
                     "An example is usable only if experiment.json exposes every component and option it calls.\n\n"
                     + "\n".join(f"- [{path.name}]({path.name})" for path in example_sources) + "\n")
-        implementation = self.private / "implementation"
-        implementation.mkdir()
-        atomic_text(implementation / "research-controller.py", self.research_controller)
-        for name in ("autoresearch.py", "controller_runtime.py", "controller_worker.py",
-                     "loopblox.py", "runtime_io.py", "components.py", "trace_report.py",
-                     "AGENTS.md", "README.md", "CONTROLLER.md", "loop.md"):
-            atomic_text(implementation / name, WORKER_SOURCE if name == "controller_worker.py" else (HERE / name).read_text())
+        snapshot_implementation(self.private)
+        atomic_text(self.private / "implementation/research-controller.py", self.research_controller)
         initial = self.save_candidate({
             "source": baseline_source,
             "rationale": "Host-supplied baseline, without researcher changes. Establish reference success and cost; "

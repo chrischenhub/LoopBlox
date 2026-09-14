@@ -11,7 +11,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Callable, Literal
 
-from runtime_io import run_process
+from loopblox.runtime.io import run_process
 
 JsonObject = dict[str, Any]
 Effect = Literal["none", "applied", "unknown"]
