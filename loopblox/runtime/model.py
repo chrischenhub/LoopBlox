@@ -7,15 +7,18 @@ import os
 import re
 import subprocess
 import sys
+import uuid
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Callable, Literal
+from urllib.parse import urlsplit
 
 from loopblox.runtime.io import run_process
 
 JsonObject = dict[str, Any]
 Effect = Literal["none", "applied", "unknown"]
-_TRANSIENT_CODES = {"model_transport_failure", "rate_limit", "service_unavailable", "model_timeout"}
+_TRANSIENT_CODES = {"model_transport_failure", "rate_limit", "service_unavailable", "model_timeout",
+                    "concurrency_limit_exceeded"}
 _PROVIDER_STOP_CODES = {"service_not_ready", "daily_quota_exhausted"}
 
 # Trusted host transport, separate from the credential-free candidate worker.
@@ -48,19 +51,22 @@ class OperationalProblem(Exception):
         code: str = "service_unavailable",
         effects: Effect = "unknown",
         usage: JsonObject | None = None,
+        response: Any = None,
     ):
         super().__init__(message)
         self.code = code
         self.effects = effects
         self.usage = usage
+        self.response = response
 
 
 class HostFault(Exception):
     """The runner, its configuration, or a component violated the protocol."""
 
-    def __init__(self, message: str, *, usage: JsonObject | None = None):
+    def __init__(self, message: str, *, usage: JsonObject | None = None, response: Any = None):
         super().__init__(message)
         self.usage = usage
+        self.response = response
 
 
 class BudgetExhausted(Exception):
@@ -148,22 +154,28 @@ class ChatCompletionsClient:
         self.temperature = temperature
         self.max_tokens = max_tokens
         self.timeout = timeout
+        self.session_id = uuid.uuid4().hex
 
     @classmethod
     def from_env(cls) -> "ChatCompletionsClient":
         load_env()
-        api_key = os.environ.get("FREEINFERENCE_API_KEY")
+        provider = os.environ.get("LOOPBLOX_PROVIDER", "freeinference")
+        if provider not in {"freeinference", "opencode_go"}:
+            raise HostFault("LOOPBLOX_PROVIDER must be freeinference or opencode_go")
+        prefix = "OPENCODE_GO" if provider == "opencode_go" else "FREEINFERENCE"
+        api_key = os.environ.get(f"{prefix}_API_KEY")
         if not api_key:
-            raise HostFault("FREEINFERENCE_API_KEY is missing")
+            raise HostFault(f"{prefix}_API_KEY is missing")
         try:
-            temperature = float(os.environ.get("FREEINFERENCE_TEMPERATURE", "0"))
-            max_tokens = int(os.environ.get("FREEINFERENCE_MAX_TOKENS", "8192"))
+            temperature = float(os.environ.get(f"{prefix}_TEMPERATURE", "0"))
+            max_tokens = int(os.environ.get(f"{prefix}_MAX_TOKENS", "8192"))
         except ValueError as error:
-            raise HostFault("FREEINFERENCE_TEMPERATURE and FREEINFERENCE_MAX_TOKENS must be numeric") from error
+            raise HostFault(f"{prefix}_TEMPERATURE and {prefix}_MAX_TOKENS must be numeric") from error
         return cls(
             api_key=api_key,
-            base_url=os.environ.get("FREEINFERENCE_BASE_URL", "https://freeinference.org/v1"),
-            model=os.environ.get("FREEINFERENCE_MODEL", "deepseek-v4-flash"),
+            base_url=os.environ.get(f"{prefix}_BASE_URL", "https://opencode.ai/zen/go/v1"
+                                    if provider == "opencode_go" else "https://freeinference.org/v1"),
+            model=os.environ.get(f"{prefix}_MODEL", "glm-5.1" if provider == "opencode_go" else "deepseek-v4-flash"),
             temperature=temperature,
             max_tokens=max_tokens,
         )
@@ -175,6 +187,7 @@ class ChatCompletionsClient:
         *,
         max_output_tokens: int,
         timeout_seconds: float,
+        session_id: str | None = None,
     ) -> PlanningTurn:
         body: JsonObject = {
             "model": self.model,
@@ -190,13 +203,15 @@ class ChatCompletionsClient:
                 },
             },
         }
-        payload = self._request("POST", "/chat/completions", body, timeout_seconds=timeout_seconds)
+        payload = self._request("POST", "/chat/completions", body, timeout_seconds=timeout_seconds,
+                                session_id=session_id)
         usage = payload.get("usage")
         usage = _json_copy(usage, "provider usage") if isinstance(usage, dict) else None
         try:
             return self._parse_completion(payload, usage)
         except (OperationalProblem, HostFault) as error:
             error.usage = usage
+            error.response = payload
             raise
 
     @staticmethod
@@ -243,14 +258,15 @@ class ChatCompletionsClient:
         )
 
     def complete_chat(self, messages, *, tools=None, tool_choice=None, seed=None,
-                      max_output_tokens: int, timeout_seconds: float) -> PlanningTurn:
+                      max_output_tokens: int, timeout_seconds: float, session_id: str | None = None) -> PlanningTurn:
         """Native chat/tool output for a benchmark-owned simulated user."""
         body = dict(model=self.model, messages=messages, temperature=self.temperature, max_tokens=max_output_tokens)
         if tools:
             body.update(tools=tools, tool_choice=tool_choice or "auto")
         if seed is not None:
             body["seed"] = seed
-        payload = self._request("POST", "/chat/completions", body, timeout_seconds=timeout_seconds)
+        payload = self._request("POST", "/chat/completions", body, timeout_seconds=timeout_seconds,
+                                session_id=session_id)
         usage = payload.get("usage") if isinstance(payload.get("usage"), dict) else None
         try:
             message = payload["choices"][0]["message"]
@@ -259,20 +275,19 @@ class ChatCompletionsClient:
                 raise ValueError("Expected a nonempty assistant message")
         except (KeyError, IndexError, TypeError, ValueError, AttributeError) as error:
             raise OperationalProblem("Invalid simulated-user model response", code="invalid_model_response",
-                                     effects="none", usage=usage) from error
+                                     effects="none", usage=usage, response=payload) from error
         return PlanningTurn(raw=_json_copy(payload, "native chat response"),
                             output=_json_copy(message, "native assistant message"), usage=usage)
 
     def _request(
         self, method: str, path: str, body: JsonObject | None = None,
-        *, timeout_seconds: float | None = None,
+        *, timeout_seconds: float | None = None, session_id: str | None = None,
     ) -> JsonObject:
         timeout = self.timeout if timeout_seconds is None else min(self.timeout, timeout_seconds)
-        budget_limited = timeout_seconds is not None and timeout_seconds <= self.timeout
         if timeout <= 0:
             raise BudgetExhausted("time_limit")
         request = dict(
-            # The process owns the task deadline; the socket owns the client timeout.
+            # The process bounds the whole request; the socket bounds inactive I/O.
             url=f"{self.base_url}{path}", body=body, timeout=self.timeout,
             method=method,
             headers={
@@ -282,12 +297,12 @@ class ChatCompletionsClient:
                 "X-Reasoning-Passthrough": "false",
             },
         )
+        if urlsplit(self.base_url).hostname == "opencode.ai":
+            request["headers"]["x-opencode-session"] = session_id or self.session_id
         try:
             response = run_process([sys.executable, "-I", "-c", _HTTP_WORKER], timeout=timeout,
                                    input=json.dumps(request), capture_output=True, text=True)
         except subprocess.TimeoutExpired as error:
-            if budget_limited:
-                raise BudgetExhausted("time_limit") from error
             raise OperationalProblem("Model request exceeded its wall-clock deadline",
                                      code="model_timeout", effects="none") from error
         if response.returncode:
@@ -298,29 +313,35 @@ class ChatCompletionsClient:
         if result["status"] >= 400:
             detail = result["body"]
             if result["status"] == 429:
-                code = (
-                    "daily_quota_exhausted"
-                    if "Daily cost quota exceeded" in detail
-                    else "rate_limit"
-                )
-                raise OperationalProblem(detail[:500], code=code, effects="none")
+                try:
+                    provider_error = json.loads(detail).get("error", {})
+                except (ValueError, AttributeError):
+                    provider_error = {}
+                if isinstance(provider_error, dict) and provider_error.get("code") == "concurrency_limit_exceeded":
+                    code = "concurrency_limit_exceeded"
+                elif "Daily cost quota exceeded" in detail:
+                    code = "daily_quota_exhausted"
+                else:
+                    code = "rate_limit"
+                raise OperationalProblem(detail[:500], code=code, effects="none", response=result)
             if result["status"] in {408, 500, 502, 503, 504}:
-                raise OperationalProblem(detail[:500], code="service_unavailable", effects="none")
-            raise HostFault(f"HTTP {result['status']}: {detail[:500]}")
+                raise OperationalProblem(detail[:500], code="service_unavailable", effects="none", response=result)
+            raise HostFault(f"HTTP {result['status']}: {detail[:500]}", response=result)
         try:
             payload = json.loads(result["body"])
         except json.JSONDecodeError as error:
             raise OperationalProblem(
-                "API returned invalid JSON", code="model_transport_failure", effects="none"
+                "API returned invalid JSON", code="model_transport_failure", effects="none", response=result
             ) from error
         if not isinstance(payload, dict):
-            raise HostFault("API response is not an object")
+            raise HostFault("API response is not an object", response=result)
         choices = payload.get("choices")
         if (isinstance(choices, list) and choices and isinstance(choices[0], dict)
                 and choices[0].get("finish_reason") == "length"):
             raise OperationalProblem("Model response reached its requested output limit",
                                      code="model_output_limit", effects="none",
-                                     usage=payload.get("usage") if isinstance(payload.get("usage"), dict) else None)
+                                     usage=payload.get("usage") if isinstance(payload.get("usage"), dict) else None,
+                                     response=payload)
         message = (choices[0].get("message", {}) if isinstance(choices, list) and choices
                    and isinstance(choices[0], dict) else {})
         content = message.get("content") if isinstance(message, dict) else None
@@ -329,5 +350,6 @@ class ChatCompletionsClient:
         if (isinstance(content, str) and not message.get("tool_calls")
                 and re.fullmatch(r"⏳ The model is starting up — this takes about \d+ minutes\. Please wait…", content.strip())):
             raise OperationalProblem(content, code="service_not_ready", effects="none",
-                                     usage=payload.get("usage") if isinstance(payload.get("usage"), dict) else None)
+                                     usage=payload.get("usage") if isinstance(payload.get("usage"), dict) else None,
+                                     response=payload)
         return payload

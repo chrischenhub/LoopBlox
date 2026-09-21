@@ -1,12 +1,55 @@
-# τ² environment and general experiment commands
+# Running continuous Loop research
 
-Updated September 14, 2026. This page covers environment setup, fixed Loop comparisons, and domain studies. The current BFS/DFS protocol uses five fixed tasks; see its [experiment guidelines](random-search.md). The development/holdout splits and explicit repeat options below are separate from that pilot's configuration.
+Updated September 21, 2026. This guide covers environment setup, task preparation,
+commands and output files for τ²-bench telecom research. [experiment.md](../experiment.md)
+defines the [task set and scoring](../experiment.md#task-set-and-scoring),
+[limits and accounting](../experiment.md#limits-and-accounting),
+[selection and checkpoints](../experiment.md#selection-and-checkpoints), and
+[stopping and recovery](../experiment.md#stopping-and-recovery).
 
-Run all commands from the repository root. Complete the [README setup](../README.md#quick-start) and start Docker first. Inspecting the component catalog and running this page's `prepare` command do not call models. Comparisons, studies, campaign runs, and branch research use the configured model service and consume quota. Inspect the relevant `--help` output and set budgets first.
+Run all commands from the repository root. Complete the
+[README setup](../README.md#quick-start) and start Docker first. Inspecting the
+component catalog and preparing the task suite do not call models. Task execution,
+native research and Jev analysis consume their configured services' quota.
 
-Core host modules use the standard library. The τ² entry point uses its frozen Python 3.12 environment; candidate Loops run in isolated Docker workers. Configure the model through `FREEINFERENCE_API_KEY`, `FREEINFERENCE_BASE_URL`, and `FREEINFERENCE_MODEL` in `.env`.
+## Host configuration
 
-## τ²-bench domain comparisons
+Core host modules use the standard library. The τ² entry point uses the pinned
+Python 3.12 benchmark environment prepared below; candidate Loops run in Docker
+workers. Configure the model through `FREEINFERENCE_API_KEY`,
+`FREEINFERENCE_BASE_URL` and `FREEINFERENCE_MODEL` in the ignored local `.env`.
+
+Research also requires [Jev setup](jev.md): `TYPESAFE_API_KEY` and
+`typesafe-sdk==0.7.0`, optionally in a separate host interpreter selected by
+`LOOPBLOX_JEV_PYTHON`. Loops using the optional `judge` component require the same
+setup for standalone task runs and the local playground. See
+[Judge usage](../CONTROLLER.md#judge-online-typed-judgments) for its API.
+
+To use OpenCode Go, set `LOOPBLOX_PROVIDER=opencode_go` and `OPENCODE_GO_API_KEY`
+in `.env` or the process environment. Its defaults are
+`https://opencode.ai/zen/go/v1` and `glm-5.1`; [.env.example](../.env.example)
+lists optional overrides. Choose a model with a Chat Completions endpoint from
+the [Go documentation](https://opencode.ai/docs/go/#endpoints).
+The default provider is `freeinference`.
+
+## Native Codex researcher
+
+Configure these values in the local `.env` or process environment:
+
+| Setting | Value |
+| --- | --- |
+| `LOOPBLOX_CODEX_BINARY_ROOT` | Required path to the pinned **Linux Codex 0.155.0** distribution containing `bin/codex` and its stock Code Mode host. Use the distribution matching the container architecture. |
+| `LOOPBLOX_CODEX_MODEL` | Optional; defaults to `gpt-6-astra`. |
+| `LOOPBLOX_CODEX_REASONING_EFFORT` | Optional; defaults to `low`. |
+| `LOOPBLOX_CODEX_AUTH_FILE` | Optional path to an existing ChatGPT subscription login; defaults to `$CODEX_HOME/auth.json`, or `~/.codex/auth.json` when `CODEX_HOME` is unset. |
+
+Codex uses the ChatGPT subscription login; API-key authentication is rejected.
+The task model and simulated user use the configured model gateway. Local
+preflight checks the native binary and login format before task dispatch; online
+authentication or subscription failures can still occur later. Credentials are
+not copied into frozen evidence.
+
+## Prepare the benchmark environment and task suite
 
 ```sh
 git clone https://github.com/sierra-research/tau2-bench .artifacts/upstream/tau2-bench
@@ -14,48 +57,67 @@ git -C .artifacts/upstream/tau2-bench checkout 672227c6b6676edc20d57ea53b7000262
 uv sync --project .artifacts/upstream/tau2-bench --frozen --no-dev
 docker pull python:3.12-slim
 
-# Small integration subset: 2 development + 1 holdout task per domain
-.artifacts/upstream/tau2-bench/.venv/bin/python -B -m loopblox.benchmarks.run_tau2 prepare \
-  --output .artifacts/tau2/integration-001 --development 2 --holdout 1
-
-# Three fixed Loops: full, brief, and Plan followed by full; development only
-.artifacts/upstream/tau2-bench/.venv/bin/python -B -m loopblox.benchmarks.run_tau2 compare \
-  --suite .artifacts/tau2/integration-001 --output .artifacts/tau2/compare-001
-
-# Run the first two frozen development tasks per domain twice to observe variability
-.artifacts/upstream/tau2-bench/.venv/bin/python -B -m loopblox.benchmarks.run_tau2 compare \
-  --suite .artifacts/tau2/integration-001 --output .artifacts/tau2/repeat-001 \
-  --development-per-domain 2 --repeats 2
-
-# Specialist and mixed search; freeze all selections, then compare on shared holdout
-.artifacts/upstream/tau2-bench/.venv/bin/python -B -m loopblox.benchmarks.run_tau2 study \
-  --suite .artifacts/tau2/integration-001 --output .artifacts/tau2/study-001
-
-# Example pool for a later study: 18 + 18 per domain, excluding integration groups
-.artifacts/upstream/tau2-bench/.venv/bin/python -B -m loopblox.benchmarks.run_tau2 prepare \
-  --output .artifacts/tau2/domain-001 --development 18 --holdout 18 \
-  --seed 3101 --exclude-suite .artifacts/tau2/integration-001
-
-python3 -B -m loopblox.benchmarks.run_tau2 report .artifacts/tau2/study-001
+# Freeze an audited task suite
+.artifacts/upstream/tau2-bench/.venv/bin/python -B -m loopblox.benchmarks.run_tau2 \
+  prepare --output .artifacts/tau2/telecom-suite-NEW --seed 20260921
 ```
 
-`prepare` audits empty-trajectory scores, selects tasks stratified by control requirements, and freezes code, data, dependency versions, and seeds without model calls. If too few eligible groups remain, it preserves the failure record and exits rather than filling the set with repeated templates. Runs must use the Python environment and dependencies recorded during preparation. Every output directory must be new.
+Use a new output directory. `--seed` is required; the command above supplies an
+example value. Add `--exclude-suite PATH` for each prior suite whose exposure must
+be recorded. The [task selection rules](../experiment.md#task-set-and-scoring)
+define how those reservations affect the new suite.
 
-These are custom grouped subsets, not the official train/test splits or full-leaderboard reliability metrics. The CLI runs tasks serially and does not coordinate requests from other processes using the same model service.
+`prepare` writes `manifest.json`, `selection.json`, `audit.json`, `versions.json`
+and the frozen upstream files. It does not start research or execute task Loops.
 
-`compare` defaults to all development tasks with one run per controller. `--development-per-domain` freezes a prefix of each domain's development tasks before execution; `--repeats` reruns those tasks. Each run creates a fresh environment and worker, retains the task seed, and rotates controller order. Reports pair by task and repeat index. Repeats do not add independent task groups or guarantee identical provider responses under the same seed.
+## Run, stop and recover
 
-A host call such as `compare(args, controllers=(("control", "failure_reflection.py"), ("stagnation", "stagnation_reflection.py")))` adds the reactive baseline automatically. The name `baseline` is reserved for that shared reference; `control` labels an additional mechanism ablation. With no additional controllers specified, the defaults are baseline, brief, and plan.
+After configuring the model gateway, Jev, Docker and native Codex:
 
-The adapter retains the official policies, tools, conversation state machine, simulated user, and final evaluator while replacing the agent's Loop. Telecom users have separate device tools; their internal calls and private instructions are excluded from controller context. Every task gets fresh official environment/user state and an isolated controller worker. `respond_to_user` sends customer-visible messages. The outer `run(env)` return ends the controller; it neither sends a customer message nor certifies success.
+```sh
+# Freeze code, task suite and settings, then start the continuous researcher
+.artifacts/upstream/tau2-bench/.venv/bin/python -B -m loopblox.benchmarks.run_tau2 \
+  run --suite .artifacts/tau2/telecom-suite-NEW --output .artifacts/tau2/research-NEW
 
-**Scoring follows the pinned task files.** In the pinned [retail tasks](https://github.com/sierra-research/tau2-bench/blob/672227c6b6676edc20d57ea53b7000262aae77b9/data/tau2/domains/retail/tasks.json), 112/114 use DB + NL_ASSERTION. In the [telecom tasks](https://github.com/sierra-research/tau2-bench/blob/672227c6b6676edc20d57ea53b7000262aae77b9/data/tau2/domains/telecom/tasks.json), 2253/2285 use ENV_ASSERTION; the other 32 also require ACTION. This differs from the upstream overview's DB + COMMUNICATE description.
+# Read live state and refresh report.md / status.json
+python3 -B -m loopblox.benchmarks.run_tau2 status --output .artifacts/tau2/research-NEW
 
-The initial subset excludes nonempty LLM assertions, prescribed action paths, human handoffs, and tasks that score on an empty trajectory. It verifies transaction outcomes and environment conditions after diagnosis, without comprehensively evaluating refusals, handoffs, communication quality, or policy compliance. Official scoring begins after the worker closes. The researcher can read development scores and public traces; reference actions, assertions, and complete user-simulation records stay in host-private directories.
+# Request a stop
+python3 -B -m loopblox.benchmarks.run_tau2 stop --output .artifacts/tau2/research-NEW
+```
 
-The agent and simulated user default to the same model, with user temperature 0. `--user-model` can freeze a separate user model. Both share task and research budgets, with usage reported separately. The action limit applies to controller-issued actions; user tools are bounded by the official state machine and an additional step cap. Dollar cost remains unknown unless unit prices are frozen. Actual token use and failed-call costs remain recorded.
+`run` stays in the foreground and starts a child from the frozen implementation.
+Use a new output directory. Ctrl-C also requests a stop and waits for cleanup.
+Use a second terminal for `status` or `stop` while `run` is active.
 
-SpreadsheetBench 2 is a subsequent validation direction. Its [official instructions](https://github.com/RUCKBReasoning/SpreadsheetBench-2) require LibreOffice recalculation for modeling/debugging; visualization evaluation also involves Windows Excel/WPS image export alongside VLM assessment. Audit task scoring and dependencies before integration. Financial spreadsheet tasks alone do not establish full accounting-operations capability.
+After diagnosing a failure, check the
+[recovery conditions](../experiment.md#stopping-and-recovery), then recover into
+a new directory with the diagnosis or repair recorded in `--reason`:
+
+```sh
+.artifacts/upstream/tau2-bench/.venv/bin/python -B -m loopblox.benchmarks.run_tau2 \
+  recover --previous .artifacts/tau2/research-FAILED \
+  --output .artifacts/tau2/research-RECOVERED \
+  --reason "Describe the diagnosed fault, new evidence or implementation repair"
+```
+
+`recover` starts the new attempt in the foreground. Its eligibility checks,
+waiting conditions, retained evidence and accounting follow the linked protocol.
+
+## Inspect campaign outputs
+
+Paths below are relative to the campaign's output directory. Run `status` to
+refresh the derived report and usage summary.
+
+| Path | Contents |
+| --- | --- |
+| `protocol.json` | Frozen task IDs, settings, limits and implementation hashes. |
+| `report.md` / `status.json` | Current state, iteration history and cumulative usage. |
+| `research/selected-controller.py` | Current fully evaluated Loop, once available. |
+| `research/public/progress.json` | Incumbent, pending candidates and iteration count. |
+| `research/public/evidence.json` | Candidate outcomes and links to recorded evidence. |
+| `research/public/checkpoints/` | Completed iteration records and notes. |
+| `research/public/evaluations/` | Batch results, task traces and Jev evidence. |
 
 ## Component catalog and execution reports
 
@@ -70,4 +132,6 @@ python3 -B -m loopblox.runtime.components --markdown > COMPONENTS.md
 python3 -B -m loopblox.report path/to/trace.json --output path/to/report.html
 ```
 
-[COMPONENTS.md](../COMPONENTS.md) lists each component's returned reference type and full contract. [CONTROLLER.md](../CONTROLLER.md) is the composition API read by the researcher. Episode JSON and Markdown catalogs derive from the same filtered definitions; only the episode's exposed options are available.
+[COMPONENTS.md](../COMPONENTS.md) lists component contracts.
+[CONTROLLER.md](../CONTROLLER.md) explains composition, task execution and the
+researcher API.

@@ -8,7 +8,7 @@ def run(env):
     guidance = []
     while True:
         context = env.component("context_full")
-        decision = env.component("think_decide", context=context["id"], selection="sequence", inputs=guidance)
+        decision = env.component("decide", context=context["id"], selection="sequence", inputs=guidance)
         guidance = []
         if decision["value"]["kind"] == "completion_proposed":
             return decision["value"]["response"]
@@ -17,7 +17,7 @@ def run(env):
             execution = env.component("execute", decision=decision["id"], take="one")
             observation = env.component("observe_full", execution=execution["id"])
             outcome = observation["value"]["outcomes"][0]
-            if (action["capability_id"] == "finish" and outcome["action_id"] == action["action_id"]
+            if (action["capability_id"] in {"finish", "finish_proposal"} and outcome["action_id"] == action["action_id"]
                     and outcome["status"] == "ok"):
                 return outcome["result"]
             result = outcome["result"]

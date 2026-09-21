@@ -1,127 +1,98 @@
 # LoopBlox
 
-Compose agent harness behavior from components with explicit contracts, compare those compositions on verifiable tasks, and let a research agent search for better Loops.
+![Search for better agent loops.](docs/assets/loopblox-banner.svg)
 
-Loops are ordinary Python. The researcher can change component order, repetition, branches, and exposed options. The host fixes model interfaces, tools, component implementations, budgets, isolation, and scoring. Complete task runs are the evaluation unit; candidates, calls, failures, and costs are recorded.
+[Quick start](#quick-start) · [Write a Loop](CONTROLLER.md) · [Components](COMPONENTS.md) · [Experiments](docs/continual-improvement.md)
 
-**This is a research prototype.** It integrates τ²-bench retail and telecom. One random-start screening campaign and part of a depth-first search have run to exercise the process; no holdout improvement has been established. See the latest [BFS + DFS experiment summary](docs/experiments/bfs-dfs-20260914/README.md).
+LoopBlox is an open-source research environment for composing agent behavior in Python and letting a research agent search for better compositions. Compare complete task outcomes and costs while keeping the model, tools, and component contracts fixed.
 
-## Quick start
+**Research prototype.** The active release benchmark is **τ²-bench telecom**. Its pinned official train/test tasks use deterministic environment checks, with additional action checks on some tasks; they do not require an LLM grader. The retail adapter and historical experiments remain available. No holdout improvement has been established.
 
-The core host uses only the Python standard library. Use Python 3.12 and run these commands from the repository root.
+## Announcement target
 
-```sh
-# Inspect component contracts and commands without model requests
-python3 -B -m loopblox.runtime.components --markdown
-python3 -B -m loopblox.benchmarks.run_tau2 --help
-python3 -B -m loopblox.experiments.search --help
-```
+The first LinkedIn announcement requires a complete, reproducible **τ²-bench telecom** example. Readers should be able to follow the Python Loop, see how research changed it, and inspect its recorded execution. Three deliverables define this milestone:
 
-τ² dependencies have their own environment, and candidate Loops run in Docker workers. Setup instructions are linked below.
+1. A non-baseline Loop with an observed success-rate gain. Search on official training tasks and select a Loop with a meaningful behavioral change from [the reactive baseline](controllers/reactive.py). Close all researchers and freeze the selection before comparing it with the baseline on the complete pinned official telecom test split. Use the same model settings, tools, component contracts, task limits, tasks and repeats, with fresh environments and rotated execution order. The selected Loop must achieve a higher paired success rate; report the size of the gain alongside calls, tokens, time, known costs, failures and missing scores.
+2. An educational visualization of that result. Show the baseline and selected Python Loops, explain the changed composition, and connect their components to at least one recorded task comparison. Make model calls, context, tool execution and observations understandable, with Jev measurements linked to the evidence they describe. Distinguish illustrative control flow from executed steps. The view is read-only and derives from source and recorded traces.
+3. Jev integrated into the released research workflow. Generate semantic measurements from public development traces, make them available to the researcher, and preserve evidence that the researcher inspected them during the search that produced the selected Loop. Include input provenance, returned measurements, model/schema identity and usage. Document how to run this path from a fresh checkout. The environment evaluator remains the source of task scores; Jev supplies diagnostic evidence.
 
-Real task runs also require a working Docker Engine and a model service compatible with the current structured Chat Completions requests:
+Before the campaign, freeze task membership and prior exposure, candidate-selection rules, model settings, budgets, repeats and score handling in its run protocol. Historical research exposed some official test tasks; disclose that exposure and related task families in the result. Final test feedback must not guide further tuning or candidate selection. Report an observed gain with its sample size and uncertainty; stronger claims require supporting evidence. An incomplete comparison or no gain leaves the result requirement unmet.
 
-```sh
-cp .env.example .env
-# Set your FREEINFERENCE_API_KEY and model configuration in .env
-```
+Publish the exact baseline and selected source, reproduction commands, frozen configuration, aggregate comparison and permitted trace examples with the visualization. Raw evidence retains its existing artifact provenance. The broader [domain improvement study](docs/continual-improvement.md) remains a research direction beyond this release milestone.
 
-Environment variables and defaults are listed in [.env.example](.env.example). Their names follow the current gateway. Verify structured-response compatibility when changing the service address. Comparisons, studies, and research consume model quota, including calls by the τ² simulated user. Freeze the model and budgets before each experiment.
+## A Loop is Python
 
-- [Run τ²](docs/running.md): pin the upstream version, prepare tasks, and run fixed comparisons or domain studies.
-- [Current experiment guidelines](docs/random-search.md): the fixed five-task subset, BFS screening, Top 3 local research, DFS, and budgets.
-- [Write a Loop](CONTROLLER.md): component references, calls, and the outer `run(env)` return.
-- [Build the website](site/README.md): the English introduction and local preview.
-
-## A Loop
-
-The shared baseline is [controllers/reactive.py](controllers/reactive.py):
+This is the [shared baseline](controllers/reactive.py):
 
 ```python
 def run(env):
     while True:
         context = env.component("context_full")
-        decision = env.component("think_decide", context=context["id"])
+        decision = env.component("decide", context=context["id"])
         if decision["value"]["kind"] == "completion_proposed":
             return decision["value"]["response"]
         execution = env.component("execute", decision=decision["id"])
         env.component("observe_full", execution=execution["id"])
 ```
 
-It directly composes full context, model decisions, execution, and full observations, normally with one model request per iteration. The outer controller returns after a completion proposal; a component return alone does not end the task. Authoritative scoring happens after the worker closes.
+A Loop chooses component order, repetition, branches, and exposed options using ordinary Python. The host owns model and tool access, isolation, budgets, and scoring. The outer `run(env)` return ends the controller; scoring follows after its worker closes.
 
-The library has 14 subcomponents organized into Context / Evidence, Propose, Assess, and Act. Families organize the catalog. [loopblox/runtime/components.py](loopblox/runtime/components.py) defines the contracts and allowed options, and [COMPONENTS.md](COMPONENTS.md) is generated from that source. Python is the sole executable Loop definition; website diagrams are explanatory.
+The [14 components](COMPONENTS.md) cover context and evidence, proposals, assessment, and actions. Try [working through plan steps](controllers/scoped_plan.py), [comparing decision proposals](controllers/compared_work.py), [reviewing completion](controllers/planned_work.py), or [reflecting after tool failures](controllers/failure_reflection.py). Context can retain a summary while adding new evidence, and brief observations can be paged or expanded to their original full result. The `judge` component uses Jev for caller-defined yes/no judgments and classification; questions and category descriptions are editable while evidence access and output types stay fixed. See [Judge usage](CONTROLLER.md#judge-online-typed-judgments). Contracts live in [components.py](loopblox/runtime/components.py); the catalog is generated from that source.
 
-| Example | Behavior |
-| --- | --- |
-| [reactive.py](controllers/reactive.py) | Shared baseline with full context and full observations. |
-| [brief_work.py](controllers/brief_work.py) | Changes the baseline's observations to brief. |
-| [plan_then_work.py](controllers/plan_then_work.py) | Adds one opening Plan to the baseline. |
-| [planned_work.py](controllers/planned_work.py) | Plans first and reviews completion proposals. |
-| [reviewed_plan.py](controllers/reviewed_plan.py) | Generates and reviews a plan before each action group. |
-| [failure_reflection.py](controllers/failure_reflection.py) | Reflects after tool failures. |
-| [stagnation_reflection.py](controllers/stagnation_reflection.py) | Reflects after tool failures or consecutive identical actions and results. |
+## How research works
 
-The researcher's fixed Loop is [controllers/research.py](controllers/research.py). Repeated results are a reflection heuristic; they do not by themselves establish lack of progress or the effectiveness of a change.
+1. Freeze the experiment: tasks, component boundary, baseline, model, seeds, and budgets.
+2. Run the baseline, then let the researcher save immutable Loops, evaluate them on development tasks, inspect traces, and select candidates. Every development task run receives [Jev analysis](docs/jev.md) before its feedback reaches the researcher: four observed cycles per segment, with the final partial segment retained.
+3. Compare candidates on complete shared task batches. Record calls, outcomes, failures, and costs, including the researcher and simulated user.
 
-## How experiments work
+Search changes Python compositions; model weights stay fixed. Each task gets a fresh environment and isolated worker. In studies with holdout evaluation, all researchers close and selections freeze before holdout runs. Final feedback never returns to the researcher.
 
-1. Freeze the question, component boundary, model, environment, task splits, seeds, baseline source, and budgets.
-2. Run the shared baseline. The researcher saves immutable candidates, evaluates them on development tasks, reads public traces, and selects candidates.
-3. Freeze all candidates in each comparison, then run the complete shared task batch. Pair results by task position and rotate candidate order. BFS/DFS uses the same five explicit task IDs on every comparison; see the [guidelines](docs/random-search.md).
-4. Where holdout evaluation is configured, close the researcher and freeze its selection before running it. Final feedback never returns to the researcher.
+The proposed [domain improvement protocol](docs/continual-improvement.md) extends research across rounds: build an initial Loop, measure it on new tasks, release permitted experience, and search the next version before final sealed evaluation. It covers τ² and τ³ separately by domain. Each episode freezes its inputs; task-set updates happen between episodes. A narrow retail command now supports one lineage over three new official training batches followed by all official test; the complete multi-condition lifecycle is not implemented yet.
 
-Here, training means **searching Python Loop compositions**; model weights do not change. Complete the batch before judging a candidate. Each batch has `n` distinct tasks, and an insufficient task pool causes rejection rather than duplicate padding. BFS/DFS reuses its fixed task list, once per candidate per task. Other studies default to sampling without replacement within each evaluation. Repeated runs do not add independent task groups. Training-only pilots do not run holdout.
+## Quick start
 
-Task execution, research, and simulated-user calls share accounting and budgets. Task failure, exhaustion, model-service errors, host faults, and scoring faults retain distinct statuses. Interruptions and unknown usage stay in the ledger. Recovery starts in a new directory, preserves completed branches, and subtracts prior spend. Definitions are in [loop.md](loop.md); the full rules are in [AGENTS.md](AGENTS.md).
-
-## Current status and next milestone
-
-The September 13–14, 2026 pilot started with 10 random Loops, each evaluated on five shared development draws, and selected loop06, loop08, and loop04. All three completed initial local research before DFS recorded explicit parent-child edges. In DFS, loop06 and loop08 submitted; a model-service error blocked loop04. The campaign incorrectly sampled with replacement, violating the requirement. Its five BFS draws covered only four distinct tasks. Original results remain records of that protocol deviation. There was no validation or holdout; see the [experiment summary](docs/experiments/bfs-dfs-20260914/README.md) for results and limitations.
-
-The current code uses explicit task IDs: BFS and DFS share five development tasks, and both parent and child rerun the full batch. There is no separate validation/test subset. **This protocol has not been rerun yet.** Its settings, stages, and budgets are in the [current experiment guidelines](docs/random-search.md).
-
-The next formal study asks: **with the same model and components, can a Loop researched for one domain outperform the shared baseline and a mixed-domain Loop on unseen tasks?**
-
-The plan uses audited, grouped τ² retail and telecom subsets for two specialist searches and one mixed-domain search. Mixed search receives the sum of the specialist budgets. After all researchers close, the baseline, specialist Loops, and mixed Loop face the same holdout tasks, with total cost and cross-domain performance recorded. Models, budgets, independent repeats, and formal dataset splits still need to be frozen.
-
-TextWorld is retired; τ² is the only current environment. SpreadsheetBench 2 modeling/debugging is a subsequent direction and is not integrated. Terminal-Bench is also not integrated.
-
-## Code and documentation map
-
-```text
-loopblox/                 Python implementation; run modules from the repository root
-├── runtime/              Component contracts, host execution, isolated worker, model and file I/O
-├── research/             Research episodes, random candidate generation, DFS constraints
-├── experiments/          Search, inheritance, domain studies, and shared process control
-├── benchmarks/           τ² environment and command entry point
-└── report.py             Reports for individual execution traces
-controllers/              Baseline, mechanism controls, and the fixed researcher Loop
-experiments/              JSON conditions: research questions and exposed components
-docs/                    Running instructions, sources, limitations, and public experiment summaries
-site/                     English introduction website
-```
-
-`loopblox/experiments/` contains orchestration code; the root `experiments/` contains configuration data. Each document has a defined responsibility. Historical records and build snapshots do not independently define the current experiment settings.
-
-| Document | Responsibility and status |
-| --- | --- |
-| [README.md](README.md) | Project entry point, current status, next milestone, and navigation. |
-| [Current experiment guidelines](docs/random-search.md) | BFS/DFS tasks, stages, budgets, and evidence limits. |
-| [Run τ²](docs/running.md) | Environment setup, general fixed comparisons, and domain studies. Its holdout examples are separate from the current BFS/DFS pilot. |
-| [AGENTS.md](AGENTS.md) | Engineering, freezing, accounting, isolation, research, and recovery rules. |
-| [loop.md](loop.md) | Harness, Loop, Component, Invocation, and experiment-boundary definitions. |
-| [CONTROLLER.md](CONTROLLER.md) | Implemented controller and researcher APIs. |
-| [COMPONENTS.md](COMPONENTS.md) | Generated component contracts; do not edit independently. |
-| [Historical experiment summary](docs/experiments/bfs-dfs-20260914/README.md) | Recorded BFS + DFS results, failures, missing scores, and the sampling deviation. |
-| [Sources and licenses](docs/sources.md) | Pinned benchmark source and third-party font licenses. |
-| [Website guide](site/README.md), [font guide](site/assets/fonts/README.md) | Site build, content ownership, and font licenses. `site/snapshots/*.md` are derived build inputs. |
-
-Regenerate `COMPONENTS.md` after component changes and refresh snapshots after changing website inputs:
+Use **Python 3.12** from the repository root. These commands inspect the project without model requests; the core host uses only the standard library:
 
 ```sh
-python3 -B -m loopblox.runtime.components --markdown > COMPONENTS.md
-python3 -B site/build.py --refresh-notes
+python3 -B -m loopblox.runtime.components --markdown
+python3 -B -m loopblox.benchmarks.run_tau2 --help
+python3 -B -m loopblox.experiments.search --help
 ```
 
-Raw experiments, frozen environments, and recovery chains live in Git-ignored `.artifacts/`; public summaries live in `docs/experiments/`. A fresh clone requires task-environment setup. The source repository excludes raw task trajectories, model credentials, and local deployment identity. Deleting files does not reset historical task exposure. See [LICENSE](LICENSE) for MIT terms and [docs/sources.md](docs/sources.md) for third-party sources and font licenses.
+For task runs, start Docker Engine and configure a model service compatible with the gateway's structured Chat Completions requests:
+
+```sh
+cp .env.example .env
+# Set FREEINFERENCE_API_KEY and model settings in .env
+```
+
+Follow the [τ² setup guide](docs/running.md) to install the pinned benchmark environment and run a comparison. The [search guide](docs/random-search.md) covers BFS/DFS preparation and budgets. Real runs consume model quota, including simulated-user calls; freeze settings before starting. Raw runs stay in Git-ignored `.artifacts/` and are not included in a fresh clone.
+
+Research also requires `TYPESAFE_API_KEY` and `typesafe-sdk==0.7.0` in the host interpreter or a separate interpreter selected by `LOOPBLOX_JEV_PYTHON`. [Jev setup and accounting](docs/jev.md) covers both optional online `judge` calls and mandatory post-run analysis. Online calls consume task and research budgets; post-run analysis consumes the research budget after the task closes. Loops that call Judge require the same Jev setup outside research too.
+
+For a local chat with a live view of the reactive Loop, run `python3 -B -m loopblox.chat serve` and open http://127.0.0.1:8766/. It uses the configured model and Docker worker. The [playground guide](site/README.md#local-chat-and-loop-view) describes its read-only tools, per-message limits, and saved traces.
+
+## Research status
+
+The September 13–15, 2026 pilot screened 10 random Loops and completed initial research on three. Two DFS branches submitted; the latest loop04 recovery completed its task evaluations but stopped after a submission-guard error. In its last paired batch, baseline passed 5/5 and the original loop04 source passed 3/5. DFS and its recoveries retain 210 task attempts, 204 scored results, six missing scores, and 6,655 model attempts; these totals exclude BFS. The [September 15 closeout](docs/experiments/dfs-closeout-20260915/README.md) records the latest results. The [earlier report](docs/experiments/bfs-dfs-20260914/README.md) preserves BFS screening and the sampling error: five draws covered only four distinct tasks. There was no validation or holdout.
+
+The corrected [BFS/DFS protocol](docs/random-search.md) reuses five explicit development tasks for every comparison. **It has not been rerun yet.**
+
+The next milestone is the [telecom announcement target](#announcement-target): a winning non-baseline Loop, an educational visualization, and Jev in the research workflow. The [bounded release protocol](docs/release-research.md) stops after development for review; switching domains requires a fresh campaign and does not resume the interrupted retail experiment. The broader round-based [protocol](docs/continual-improvement.md) compares a frozen initial Loop, continued search on fixed development tasks, and continued search with inherited experience, separately by domain. Reviewed task expansion follows as another condition. Its models, budgets, repeats, and splits still need to be frozen. τ² airline and τ³ integrations are planned and require separate audits. The existing specialist/mixed-domain study remains available as a separate comparison.
+
+SpreadsheetBench 2 modeling/debugging is the next benchmark direction. It and Terminal-Bench are not integrated; TextWorld is retired.
+
+## Explore
+
+| Start here | What you'll find |
+| --- | --- |
+| [Controller API](CONTROLLER.md) / [examples](controllers/) | Write and compose Loops. |
+| [Concepts](loop.md) / [component contracts](COMPONENTS.md) | Definitions, boundaries, and available operations. |
+| [Domain improvement protocol](docs/continual-improvement.md) | Proposed training, new-task feedback, cross-round updates, and final evaluation for τ²/τ³. |
+| [Run τ²](docs/running.md) / [BFS/DFS guide](docs/random-search.md) | Current setup, comparisons, and development-only search campaigns. |
+| [Jev analysis](docs/jev.md) | Fixed post-run segment measurements, researcher feedback, setup and usage. |
+| [Implementation](loopblox/) / [conditions](experiments/) | Runtime and research code; experiment configuration. |
+| [Website](site/README.md) | Build the read-only visual introduction. |
+| [Engineering policy](AGENTS.md) | Isolation, accounting, freezing, and recovery rules. |
+
+[MIT license](LICENSE). Benchmark sources and bundled font licenses are documented in [Sources and licenses](docs/sources.md).

@@ -16,8 +16,8 @@ from loopblox.research.sampling import generate_candidates
 from loopblox.experiments.common import clients, run_stage, verify
 from loopblox.benchmarks.run_tau2 import user_client
 from loopblox.runtime.io import atomic_json, atomic_text, digest, image_id
-from loopblox.experiments.study import BASELINE_CONTROLLER, model_settings
-from loopblox.benchmarks.tau2 import Tau2Runner, load_suite
+from loopblox.experiments.study import BASELINE_CONTROLLER, model_settings, native_researcher_usage
+from loopblox.benchmarks.tau2 import DEFAULT_TASK_LIMITS, Tau2Runner, load_suite
 
 
 TASK_IDS = (
@@ -48,7 +48,7 @@ def prepare(args):
     client = ChatCompletionsClient.from_env()
     user = user_client(argparse.Namespace(user_model=None, user_output_allowance=2048), client)
     worker = image_id(args.worker_image)
-    limits = Limits(seconds=300, actions=40, model_calls=64, output_tokens=65536)
+    limits = DEFAULT_TASK_LIMITS
     root = args.output.resolve()
     root.mkdir(parents=True, exist_ok=False)
     shutil.copytree(args.suite, root / 'suite')
@@ -174,7 +174,8 @@ def branch_spend(folder):
     state, result = read(folder / 'private/state.json'), read(folder / 'result.json')
     usage = model_usage(read(folder / 'private/research-usage.json')['calls'])
     return dict(task_runs=state['task_runs_used'], model_calls=usage['model_calls'],
-                output_tokens=usage['charged_output_tokens'], seconds=math.ceil(result['elapsed_seconds']))
+                output_tokens=usage['charged_output_tokens'],
+                seconds=math.ceil(result.get('budget_seconds', result['elapsed_seconds'])))
 
 
 def branch_budget(root, protocol, name):
@@ -199,9 +200,12 @@ def prepare_resume(source, root):
     for name, expected in protocol['implementation_sha256'].items():
         if digest((source / 'implementation' / name).read_bytes()) != expected:
             raise ValueError('Original frozen implementation changed: ' + name)
+        if not (ROOT / name).is_file():
+            raise ValueError('The campaign uses an archived source: ' + name
+                             + '. Use its original frozen implementation for historical recovery.')
         current = digest((ROOT / name).read_bytes())
         if name not in {'loopblox/runtime/model.py', 'loopblox/runtime/controller.py', 'loopblox/research/session.py',
-                        'controllers/research.py', 'loopblox/experiments/search.py', 'AGENTS.md', 'README.md'}:
+                        'loopblox/experiments/search.py', 'AGENTS.md', 'README.md'}:
             if current != expected:
                 raise ValueError('Recovery must retain the library, environment and instructions: ' + name)
         if current != expected:
@@ -224,7 +228,7 @@ def prepare_resume(source, root):
     usage = model_usage(screening_calls(source))
     result = read(source / 'screening/result.json') if not dfs else dict(dispatch_complete=True, elapsed_seconds=0)
     screening_reused = result.get('dispatch_complete', False)
-    seconds = result.get('elapsed_seconds')
+    seconds = result.get('budget_seconds', result.get('elapsed_seconds'))
     if seconds is None:
         seconds = ((source / 'screening/result.json').stat().st_mtime
                    - (source / 'screening/private/setup.json').stat().st_mtime)
@@ -392,7 +396,8 @@ def screen(root):
             session.evaluate(dict(candidate_ids=session.initial_candidates, n=1), 0)
             feedback = session.evaluate(dict(candidate_ids=session.initial_candidates + [e['candidate_id'] for e in entries],
                                              n=protocol['batch']), 0)
-        if any(row['status'] == 'not_started' for row in feedback['runs']):
+        rows = read(session.public / feedback['artifact'])['runs']
+        if any(row['status'] == 'not_started' for row in rows):
             raise RuntimeError('Screening budget ended before all planned rows were attempted')
         scores = feedback['summary']['candidates']
         for entry in entries:
@@ -410,7 +415,7 @@ def screen(root):
         result.update(status='incomplete' if excluded else 'complete', dispatch_complete=True,
                       excluded=excluded, ranking=ranking, top=ranking[:protocol['top']],
                       baseline=scores[session.initial_candidates[0]],
-                      evaluation=feedback['artifact'], draws=[r['task_id'] for r in feedback['runs']
+                      evaluation=feedback['artifact'], draws=[r['task_id'] for r in rows
                                                            if r['candidate_id'] == session.initial_candidates[0]])
         session.select(dict(candidate_id=ranking[0]['candidate_id']), 0)
         session.state.update(status='selected', frozen_candidate=ranking[0]['candidate_id'])
@@ -421,8 +426,12 @@ def screen(root):
         raise
     finally:
         session.save()
+        elapsed = time.monotonic() - started
+        prior = read(root / 'private/prior-campaign/screening/result.json') if recovery else {}
         result.update(task_runs=session.state['task_runs_used'], usage=model_usage(screening_calls(root)),
-                      elapsed_seconds=time.monotonic() - started + (recovery['spent']['seconds'] if recovery else 0))
+                      elapsed_seconds=elapsed + prior.get('elapsed_seconds', 0),
+                      budget_seconds=max(0, elapsed - session.meter.timeout_wait_seconds)
+                          + (recovery['spent']['seconds'] if recovery else 0))
         atomic_json(session.output / 'result.json', result)
 
 
@@ -451,6 +460,8 @@ def branch(root, name):
                       elapsed_seconds=time.monotonic() - started)
         if hasattr(session, 'meter'):
             result['usage'] = session.meter.summary()
+            result['budget_seconds'] = max(0, result['elapsed_seconds'] - result['usage']['timeout_wait_seconds'])
+        result['native_researcher_usage'] = native_researcher_usage(session.output)
         atomic_json(session.output / 'result.json', result)
 
 
@@ -585,17 +596,23 @@ def report(root):
                               if node['evaluation_id'] else '—')
                 lines.append(f"| [{node['candidate_id']}]({prefix}/candidates/{node['candidate_id']}.py) | "
                              f"{node['parent_id'] or 'root'} | {evaluation} |")
-    calls, task_runs = screening_calls(root), 0
+    calls, task_runs, native_records = screening_calls(root), 0, []
     for paths in protocol.get('recovery', {}).get('prior_branches', {}).values():
         for path in paths:
             calls.extend(read(root / path / 'private/research-usage.json')['calls'])
             task_runs += branch_spend(root / path)['task_runs']
+            native = native_researcher_usage(root / path)
+            if native is not None:
+                native_records.append(dict(directory=path, usage=native))
     for folder in [root / 'screening', *(root / 'branches').glob('*')]:
         ledger, episode_state = folder / 'private/research-usage.json', folder / 'private/state.json'
         if folder != root / 'screening' and ledger.exists():
             calls.extend(read(ledger)['calls'])
         if episode_state.exists():
             task_runs += read(episode_state)['task_runs_used']
+        native = native_researcher_usage(folder)
+        if native is not None:
+            native_records.append(dict(directory=str(folder.relative_to(root)), usage=native))
     usage = model_usage(calls)
     if 'recovery' in protocol:
         if not (root / 'screening/private/state.json').exists():
@@ -604,10 +621,12 @@ def report(root):
                   f"Prior screening spend: {protocol['recovery']['spent']}. "
                   f"Remaining screening caps: {protocol['recovery']['remaining']}.", '',
                   'Original campaign: [preserved report](private/prior-campaign/report.md).']
-    lines += ['', f"Actual total: {task_runs} task runs; {usage['model_calls']} model requests. "
-              'Researcher, task-agent and simulated-user calls are counted once from the episode ledgers.', '',
+    lines += ['', f"Actual total: {task_runs} task runs; {usage['model_calls']} host gateway model attempts. "
+              'Native researcher tokens are recorded separately in analysis.json; native provider attempt counts '
+              'and subscription prices remain unknown.', '',
               'Branch selections are separate submissions, not a final paired comparison or holdout ranking.', '']
-    atomic_json(root / 'analysis.json', dict(status=state['status'], task_runs=task_runs, usage=usage, holdout_runs=0))
+    atomic_json(root / 'analysis.json', dict(status=state['status'], task_runs=task_runs, usage=usage,
+                                           native_researcher_usage=native_records, holdout_runs=0))
     atomic_text(root / 'report.md', '\n'.join(lines))
 
 

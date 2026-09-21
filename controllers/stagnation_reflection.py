@@ -3,7 +3,7 @@ def run(env):
     previous = None
     while True:
         context = env.component("context_full")
-        decision = env.component("think_decide", context=context["id"], inputs=guidance)
+        decision = env.component("decide", context=context["id"], inputs=guidance)
         if decision["value"]["kind"] == "completion_proposed":
             return decision["value"]["response"]
         execution = env.component("execute", decision=decision["id"])

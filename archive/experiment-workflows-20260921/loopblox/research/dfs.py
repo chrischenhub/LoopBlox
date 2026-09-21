@@ -126,8 +126,8 @@ class DFSResearchSession(ResearchSession):
 
     def finish(self, arguments, timeout):
         candidate = arguments.get('candidate_id')
-        ids = list(dict.fromkeys([self.initial_candidates[0], candidate]))
-        checked = any(evaluation['candidate_ids'] == ids
+        checked = any(evaluation['candidate_ids'][0] == self.initial_candidates[0]
+                      and candidate in evaluation['candidate_ids']
                       and len(evaluation['sampled_tasks']) == self.dfs_policy['batch']
                       and all(row.get('verification_verdict') in {'pass', 'fail'} for row in evaluation['runs'])
                       for evaluation in self.state['evaluations'])

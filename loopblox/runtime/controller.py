@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import copy
 import json
+import math
 import os
 import select
 import selectors
@@ -15,11 +16,12 @@ from pathlib import Path
 from typing import Any
 
 from loopblox.runtime.components import (
-    RECENT_TURNS, brief_observation, capability_kinds, catalog,
-    decision_schema, definition, validate,
+    RECENT_EXECUTIONS, brief_observation, capability_kinds, catalog,
+    choose_schema, critique_schema, decision_schema, definition, validate, validate_judgments,
 )
+from loopblox.runtime import jev
 from loopblox.runtime.model import (
-    BudgetExhausted, HostFault, OperationalProblem, Tool, ToolResult,
+    BudgetExhausted, HostFault, OperationalProblem, PlanningTurn, Tool, ToolResult,
     _PROVIDER_STOP_CODES, _TRANSIENT_CODES, usage_tokens,
 )
 from loopblox.runtime.io import atomic_json, run_process
@@ -48,42 +50,59 @@ def model_usage(calls):
         known_model_output_tokens=sum(x or 0 for x in outputs),
         charged_output_tokens=sum(call["charged_output_tokens"] for call in calls),
         incomplete_usage_calls=sum(i is None or o is None for i, o in zip(inputs, outputs)),
+        timeout_wait_seconds=sum(call.get("timeout_wait_seconds", 0) for call in calls),
     )
 
 
 @dataclass(frozen=True)
 class Limits:
-    seconds: float = 1800
-    actions: int = 40
-    model_calls: int = 48
-    output_tokens: int = 65536
+    seconds: float | None = 1800
+    actions: int | None = 40
+    model_calls: int | None = 48
+    output_tokens: int | None = 65536
 
     def __post_init__(self):
-        if self.seconds <= 0 or any(type(x) is not int or x <= 0 for x in
+        if (self.seconds is not None and self.seconds <= 0) or any(x is not None and (type(x) is not int or x <= 0) for x in
                                     (self.actions, self.model_calls, self.output_tokens)):
-            raise ValueError("All limits must be positive; counts must be integers")
+            raise ValueError("Limits must be positive, or None for unlimited; counts must be integers")
+
+
+def _available(limit, used=0):
+    return math.inf if limit is None else max(0, limit - used)
+
+
+def _public_remaining(remaining):
+    """JSON uses null for an unlimited allowance; arithmetic stays inside the host."""
+    return {key: None if value == math.inf else value for key, value in remaining.items()}
 
 
 class ModelMeter:
     """One owner for the shared research budget, including nested task model calls."""
 
-    def __init__(self, path: Path, *, seconds: float, output_tokens: int, model_calls: int, parent=None):
-        if min(seconds, output_tokens, model_calls) <= 0:
+    def __init__(self, path: Path, *, seconds: float | None, output_tokens: int | None, model_calls: int | None, parent=None):
+        if any(value is not None and value <= 0 for value in (seconds, output_tokens, model_calls)):
             raise ValueError("Research limits must be positive")
         self.path = path
         self.parent = parent
-        self.deadline = time.monotonic() + seconds
-        if parent is not None:
-            self.deadline = min(self.deadline, parent.deadline)
+        self.started = time.monotonic()
         self.limits = dict(seconds=seconds, output_tokens=output_tokens, model_calls=model_calls)
         self.calls: list[dict] = []
         self.save()
 
+    @property
+    def timeout_wait_seconds(self):
+        return sum(call.get("timeout_wait_seconds", 0) for call in self.calls)
+
+    @property
+    def deadline(self):
+        deadline = self.started + _available(self.limits["seconds"]) + self.timeout_wait_seconds
+        return min(deadline, self.parent.deadline) if self.parent is not None else deadline
+
     def remaining(self):
         remaining = {
             "seconds": max(0, self.deadline - time.monotonic()),
-            "model_calls": max(0, self.limits["model_calls"] - len(self.calls)),
-            "output_tokens": max(0, self.limits["output_tokens"] - sum(
+            "model_calls": _available(self.limits["model_calls"], len(self.calls)),
+            "output_tokens": _available(self.limits["output_tokens"], sum(
                 call["charged_output_tokens"] for call in self.calls)),
         }
         if self.parent is not None:
@@ -133,7 +152,8 @@ def model_call(*, meter, scope, request, max_tokens, remaining, invoke, time_ori
     if not remaining()["model_calls"] or allowance <= 0:
         raise BudgetExhausted("model_limit")
     failure = None
-    for attempt in range(2):
+    transient_retry_used = False
+    while True:
         try:
             available = remaining()
             if available["seconds"] <= 0 or not available["model_calls"] or allowance > available["output_tokens"]:
@@ -150,7 +170,9 @@ def model_call(*, meter, scope, request, max_tokens, remaining, invoke, time_ori
         started, usage, failure = time.monotonic(), None, None
         status = "interrupted"
         try:
-            turn = invoke(allowance, remaining()["seconds"])
+            # A request must reach its own timeout before we can distinguish
+            # excluded timeout waiting from a successful call's charged time.
+            turn = invoke(allowance)
             usage, status = turn.usage, "returned"
         except BudgetExhausted as error:
             status = "budget_exhausted"
@@ -159,20 +181,44 @@ def model_call(*, meter, scope, request, max_tokens, remaining, invoke, time_ori
         except (OperationalProblem, HostFault) as error:
             usage, failure, status = error.usage, error, "failed"
             call.update(failure_code=getattr(error, "code", "host_fault"), failure=str(error))
+            if error.response is not None:
+                # Keep failed provider output with its existing attempt and privacy scope.
+                call["response"] = copy.deepcopy(error.response)
             if (isinstance(error, OperationalProblem) and error.code == "model_output_limit"
                     and usage_tokens(usage, "completion_tokens") == allowance == available["output_tokens"]):
                 status = "budget_exhausted"
                 raise BudgetExhausted("output_token_limit") from error
         finally:
             call["end_seconds"] = time.monotonic() - time_origin
-            meter.finish(call, usage=usage, status=status, elapsed=time.monotonic() - started)
+            elapsed = time.monotonic() - started
+            if (isinstance(failure, OperationalProblem) and failure.code == "model_timeout"
+                    and failure.effects == "none"):
+                call["timeout_wait_seconds"] = elapsed
+            meter.finish(call, usage=usage, status=status, elapsed=elapsed)
         if failure is None:
+            if remaining()["seconds"] <= 0:
+                raise BudgetExhausted("time_limit")
             return turn, call
-        if (attempt == 0 and isinstance(failure, OperationalProblem)
-                and failure.effects == "none" and failure.code in _TRANSIENT_CODES):
-            if remaining()["seconds"] <= 2:
+        if (isinstance(failure, OperationalProblem) and failure.effects == "none"
+                and failure.code in _TRANSIENT_CODES
+                and (failure.code in {"model_timeout", "concurrency_limit_exceeded"} or not transient_retry_used)):
+            delay = 60 if failure.code == "concurrency_limit_exceeded" else 2
+            available = remaining()
+            if (not available["model_calls"] or allowance > available["output_tokens"]
+                    or available["seconds"] <= (0 if failure.code == "model_timeout" else delay)):
                 raise failure
-            time.sleep(2)
+            waiting = time.monotonic()
+            try:
+                time.sleep(delay)
+            finally:
+                if failure.code == "model_timeout":
+                    call["timeout_wait_seconds"] += time.monotonic() - waiting
+                    owner = meter
+                    while owner is not None:
+                        owner.save()
+                        owner = owner.parent
+            if failure.code not in {"model_timeout", "concurrency_limit_exceeded"}:
+                transient_retry_used = True
             continue
         raise failure
 
@@ -187,9 +233,10 @@ class ControllerRuntime:
         if len(self.tools) != len(tools):
             raise ValueError("Duplicate capability IDs")
         self.client, self.meter, self.limits = client, meter, limits
+        self.session_id = uuid.uuid4().hex
         self.trace_path, self.scope, self.image = trace_path, scope, image
         self.started = time.monotonic()
-        self.deadline = min(self.started + limits.seconds, meter.deadline)
+        self.initial_timeout_wait_seconds = meter.timeout_wait_seconds
         self.history: list[dict] = [{"type": "task", "task": self.task}]
         self.actions: dict[str, dict] = {}
         self.calls: list[dict] = []
@@ -203,18 +250,23 @@ class ControllerRuntime:
                                            tools=[tool.disclosure_record() for tool in tools])
         self.save()
 
+    @property
+    def deadline(self):
+        excluded = self.meter.timeout_wait_seconds - self.initial_timeout_wait_seconds
+        return min(self.started + _available(self.limits.seconds) + excluded, self.meter.deadline)
+
     def save(self):
         self.record["actions_executed"] = self.actions_used
         atomic_json(self.trace_path, self.record)
 
     def remaining(self):
         return dict(
-            seconds=max(0, min(self.deadline, self.meter.deadline) - time.monotonic()),
-            actions=max(0, self.limits.actions - self.actions_used),
-            model_calls=max(0, min(self.limits.model_calls - len(self.calls),
+            seconds=max(0, self.deadline - time.monotonic()),
+            actions=_available(self.limits.actions, self.actions_used),
+            model_calls=max(0, min(_available(self.limits.model_calls, len(self.calls)),
                                    self.meter.remaining()["model_calls"])),
-            output_tokens=max(0, min(self.limits.output_tokens - sum(
-                call["charged_output_tokens"] for call in self.calls),
+            output_tokens=max(0, min(_available(self.limits.output_tokens, sum(
+                call["charged_output_tokens"] for call in self.calls)),
                 self.meter.remaining()["output_tokens"])),
         )
 
@@ -225,7 +277,7 @@ class ControllerRuntime:
     def dispatch(self, request):
         self.check_time()
         self.rpc_calls += 1
-        if self.rpc_calls > 4096:
+        if self.rpc_calls > 4096 and self.limits.actions is not None:
             raise BudgetExhausted("controller_request_limit")
         if not isinstance(request, dict) or set(request) != {"method", "arguments"}:
             raise CandidateError("Expected a controller method and arguments")
@@ -238,7 +290,7 @@ class ControllerRuntime:
         if method == "history" and not arguments:
             return copy.deepcopy(self.history)
         if method == "remaining" and not arguments:
-            return self.remaining()
+            return _public_remaining(self.remaining())
         raise CandidateError(f"Unknown controller method: {method!r}")
 
     def component(self, name, **arguments):
@@ -298,35 +350,80 @@ class ControllerRuntime:
         return next((i for i, record in enumerate(self.history)
                      if record["type"] == "model_turn" and record["component_id"] == decision), None)
 
-    def without_failed_results(self, indices):
-        """Drop failed observations, and a decision turn only when every observation it produced is dropped."""
-        selected = set(indices)
-        dropped = {i for i in indices if self.history[i]["type"] == "observation"
-                   and self.history[i]["status"] == "failed"}
-        produced: dict[int, list[int]] = {}
-        for i in indices:
-            if self.history[i]["type"] != "observation":
-                continue
-            turn = self.requesting_turn(i)
-            if turn is not None and turn in selected:
-                produced.setdefault(turn, []).append(i)
-        dropped |= {turn for turn, observations in produced.items()
-                    if all(i in dropped for i in observations)}
-        return [i for i in indices if i not in dropped]
+    def visible_history(self, start=0):
+        """Summaries are explicit context representations, not additional raw evidence."""
+        return [i for i in range(start, len(self.history))
+                if self.history[i]["type"] == "observation"
+                or (self.history[i]["type"] == "model_turn"
+                    and self.history[i]["component"] != "context_summary")]
+
+    def evidence_indices(self, indices):
+        """Prefer full evidence only when it is explicitly present in this selection."""
+        indices = list(dict.fromkeys(indices))
+        full = {self.history[i]["execution_id"] for i in indices
+                if self.history[i]["type"] == "observation"
+                and self.blocks[self.history[i]["component_id"]]["component"] == "observe_full"}
+        return [i for i in indices if self.history[i]["type"] != "observation"
+                or self.history[i]["execution_id"] not in full
+                or self.blocks[self.history[i]["component_id"]]["component"] == "observe_full"]
+
+    def decision_scope(self, arguments):
+        """Resolve a proposed local objective without changing task facts or permissions."""
+        if "scope" not in arguments:
+            return None
+        scope = arguments["scope"]
+        schema = definition("decide")["parameters"]["properties"]["scope"]
+        plan = self.reference(scope["plan"], schema["properties"]["plan"])
+        if scope["step"] >= len(plan["value"]["steps"]):
+            raise CandidateError("Scope step is outside the referenced plan")
+        return dict(plan=plan["id"], step=scope["step"], **plan["value"]["steps"][scope["step"]])
+
+    def proposal(self, block):
+        """Disclose a stored proposal, including the decision's original scope and options."""
+        value = dict(id=block["id"], component=block["component"],
+                     category=definition(block["component"])["category"], value=block["value"])
+        if value["category"] == "decision":
+            value.update(scope=self.decision_scope(block["arguments"]),
+                         tool_filter=block["arguments"]["tool_filter"],
+                         selection=block["arguments"]["selection"])
+        return value
+
+    def evidence(self, indices):
+        """Resolve public model claims and observations identically for every model provider."""
+        evidence = []
+        for index in indices:
+            record = self.history[index]
+            if record["type"] == "model_turn":
+                source = self.blocks[record["component_id"]]
+                item = dict(id=source["id"], type="model_turn", component=source["component"],
+                            category=definition(source["component"])["category"], value=record["output"])
+                if item["category"] == "decision":
+                    item["scope"] = self.decision_scope(source["arguments"])
+            else:
+                item = dict(id=record["component_id"], **record)
+            evidence.append(item)
+        return evidence
 
     def invoke(self, block, spec, args):
         name = block["component"]
         parameters = spec["parameters"]["properties"]
         if name in {"context_full", "context_recent"}:
-            indices = [i for i, record in enumerate(self.history)
-                       if record["type"] in {"model_turn", "observation"}]
+            indices = self.visible_history()
+            if "base" in args:
+                base = self.reference(args["base"], parameters["base"])["value"]
+                indices = [*base["records"], *self.visible_history(base["through"])]
             if name == "context_recent":
-                turns = [i for i in indices if self.history[i]["type"] == "model_turn"]
-                if len(turns) > RECENT_TURNS:
-                    indices = [i for i in indices if i >= turns[-RECENT_TURNS]]
-            if args.get("drop") == "failed_results":
-                indices = self.without_failed_results(indices)
-            return dict(records=indices)
+                first_observations = {}
+                for i in indices:
+                    if self.history[i]["type"] == "observation":
+                        first_observations.setdefault(self.history[i]["execution_id"], i)
+                if len(first_observations) > RECENT_EXECUTIONS:
+                    start = list(first_observations.values())[-RECENT_EXECUTIONS]
+                    indices = [i for i in indices if i >= start]
+                    decisions = [self.requesting_turn(i) for i in indices
+                                 if self.history[i]["type"] == "observation"]
+                    indices = sorted(set(indices) | {i for i in decisions if i is not None})
+            return dict(records=self.evidence_indices(indices), through=len(self.history))
         if "prompt" in spec:
             context = self.reference(args["context"], parameters["context"])
             indices = list(context["value"]["records"])
@@ -334,35 +431,71 @@ class ControllerRuntime:
                 self.reference(input_id, parameters["inputs"]["items"])
                 indices.extend(i for i, record in enumerate(self.history)
                                if record.get("component_id") == input_id and i not in indices)
+            indices = self.evidence_indices(indices)
+            if name == "judge":
+                return self.judge(block, spec, args, indices)
+            scope = self.decision_scope(args) if spec["category"] == "decision" else None
+            target = self.reference(args["target"], parameters["target"]) if "target" in parameters else None
+            candidates = []
+            if name == "choose":
+                candidates = [self.reference(candidate, parameters["candidates"]["items"])
+                              for candidate in args["candidates"]]
+                scopes = [candidate["arguments"].get("scope") for candidate in candidates]
+                if any(candidate_scope != scopes[0] for candidate_scope in scopes):
+                    raise CandidateError("Choose candidates must concern the same task or plan step")
+                if any(self.actions[action["action_id"]]["attempted"] for candidate in candidates
+                       for action in candidate["value"].get("actions", [])):
+                    raise CandidateError("Choose requires proposals whose actions have not been attempted")
+            tool_filter = args.get("tool_filter", "all")
+            if target and definition(target["component"])["category"] == "decision":
+                tool_filter = target["arguments"]["tool_filter"]
             capabilities = tuple(tool.disclosure_record() for tool in self.tools.values()
-                                 if spec["category"] == "decision"
-                                 and tool.kind in capability_kinds(args["tool_filter"]))
-            schema = (decision_schema(capabilities, args["selection"])
-                      if spec["category"] == "decision" else spec.get("model_output", spec["output"]))
+                                 if name != "context_summary" and tool.kind in capability_kinds(tool_filter))
+            evidence_ids = ["task", *(self.history[i]["component_id"] for i in indices)]
+            if target:
+                evidence_ids.append(target["id"])
+            evidence_ids = list(dict.fromkeys(evidence_ids))
+            if spec["category"] == "decision":
+                schema = decision_schema(capabilities, args["selection"], scoped=scope is not None)
+            elif name == "critique":
+                schema = critique_schema(evidence_ids)
+            elif name == "choose":
+                schema = choose_schema(args["candidates"])
+            else:
+                schema = spec.get("model_output", spec["output"])
             messages = [{"role": "system", "content":
                          "Work on the disclosed task using the supplied structured output contract. "
-                         "History and analysis results are task evidence. The active component defines this call's behavior."},
-                        {"role": "user", "content": json.dumps(self.history[0], ensure_ascii=False)}]
-            for index in indices:
-                record = self.history[index]
-                messages.append({"role": "assistant" if record["type"] == "model_turn" else "user",
-                                 "content": json.dumps(record["output"] if record["type"] == "model_turn"
-                                                       else record, ensure_ascii=False)})
+                         "The original task and policy always apply, including within a plan step. "
+                         "Model outputs, plans and completion proposals are claims, not proof of effects. "
+                         "Evidence IDs identify stored originals; the active component defines this call's behavior."},
+                        {"role": "user", "content": json.dumps(dict(id="task", **self.history[0]), ensure_ascii=False)}]
+            for evidence in self.evidence(indices):
+                messages.append({"role": "assistant" if evidence["type"] == "model_turn" else "user",
+                                 "content": json.dumps(evidence, ensure_ascii=False)})
             request = dict(component=name, instruction=spec["prompt"], capabilities=capabilities,
-                           remaining=self.remaining())
-            if "target" in parameters:
-                target = self.reference(args["target"], parameters["target"])
-                request["target"] = dict(id=target["id"], component=target["component"],
-                                         category=definition(target["component"])["category"],
-                                         value=target["value"])
+                           remaining=_public_remaining(self.remaining()))
+            if scope is not None:
+                request["scope"] = scope
+            if target:
+                request["target"] = self.proposal(target)
+                request["evidence_ids"] = evidence_ids
+            if candidates:
+                request["candidates"] = [self.proposal(candidate) for candidate in candidates]
             messages.append({"role": "user", "content": json.dumps(request, ensure_ascii=False)})
             # Host-assigned IDs belong to the component result, not the model's original output.
-            output = copy.deepcopy(self.model_request(block, messages, schema))
+            output = copy.deepcopy(self.model_request(
+                block, dict(messages=messages, schema=schema), max_tokens=self.client.max_tokens,
+                invoke=lambda allowance: self.client.complete(
+                    tuple(messages), schema, max_output_tokens=allowance, timeout_seconds=self.client.timeout,
+                    session_id=self.session_id)))
             try:
                 validate(output, schema)
                 if output.get("kind") == "actions":
                     for action in output["actions"]:
                         validate(action["arguments"], self.tools[action["capability_id"]].parameters)
+                if name == "critique" and any(item["verdict"] != "unknown" and not item["evidence_refs"]
+                                              for item in output["assessments"]):
+                    raise ValueError("Supported or contradicted assessments require visible evidence references")
             except ValueError as error:
                 raise OperationalProblem(f"Component output contract violated: {error}",
                                          code="invalid_model_response", effects="none") from error
@@ -372,7 +505,11 @@ class ControllerRuntime:
                     action["action_id"] = action_id
                     self.actions[action_id] = dict(request=copy.deepcopy(action), attempted=False)
             if name == "context_summary":
-                return dict(records=[len(self.history) - 1], summary=output["summary"])
+                return dict(records=[len(self.history) - 1], through=context["value"]["through"],
+                            summary=output["summary"])
+            if name == "critique":
+                verdicts = {item["verdict"] for item in output["assessments"]}
+                output["verdict"] = next(value for value in ("contradicted", "unknown", "supported") if value in verdicts)
             return output
         if spec["category"] == "execution":
             if name == "execute":
@@ -400,34 +537,64 @@ class ControllerRuntime:
             return value
         if spec["category"] == "observation":
             execution = self.reference(args["execution"], parameters["execution"])
-            if any(record["type"] == "observation" and record["execution_id"] == execution["id"]
-                   for record in self.history):
-                raise CandidateError("This execution has already been observed")
+            for record in self.history:
+                if record["type"] != "observation" or record["execution_id"] != execution["id"]:
+                    continue
+                observed = self.blocks[record["component_id"]]
+                if observed["component"] == "observe_full":
+                    raise CandidateError("This execution has already been observed in full")
+                if name == "observe_brief" and observed["arguments"]["offset"] == args["offset"]:
+                    raise CandidateError("This execution page has already been observed")
             value = copy.deepcopy(execution["value"])
             if name == "observe_brief":
                 for outcome in value["outcomes"]:
                     capability_id = next(event["capability_id"] for event in self.history
                                          if event["type"] == "tool_call" and event["action_id"] == outcome["action_id"])
-                    outcome["result"] = brief_observation(
-                        outcome["result"], self.tools[capability_id].preserve_observation_fields)
+                    outcome["result"], outcome["next_offset"] = brief_observation(
+                        outcome["result"], self.tools[capability_id].preserve_observation_fields, args["offset"])
             self.history.append(dict(type="observation", component_id=block["id"],
-                                     execution_id=execution["id"], **value))
+                                     execution_id=execution["id"],
+                                     **({"offset": args["offset"]} if name == "observe_brief" else {}), **value))
             return value
         raise HostFault(f"Approved component has no implementation: {name}")
 
-    def model_request(self, block, messages, schema):
-        request = dict(component_id=block["id"], component=block["component"],
-                       messages=copy.deepcopy(messages), schema=copy.deepcopy(schema))
+    def judge(self, block, spec, args, indices):
+        reservation = jev.judge_output_reservation(args["questions"])
+        if self.remaining()["output_tokens"] < reservation:
+            raise BudgetExhausted("jev_output_reservation")
+        if "judge_configuration" not in self.record:
+            self.record["judge_configuration"] = jev.configuration()
+            self.save()
+        configuration = self.record["judge_configuration"]
+        body = dict(model=configuration["model"], questions=copy.deepcopy(args["questions"]),
+                    state=dict(instruction=spec["prompt"], task=copy.deepcopy(self.task),
+                               evidence=self.evidence(indices),
+                               capabilities=[tool.disclosure_record() for tool in self.tools.values()]))
+
+        def invoke(allowance):
+            turn = jev.complete(body, configuration, allowance)
+            return PlanningTurn(raw=turn.raw, usage=turn.usage,
+                                output=dict(questions=body["questions"], answers=turn.output))
+
+        output = self.model_request(block, dict(provider="jev", **body), max_tokens=reservation, invoke=invoke)
+        try:
+            validate_judgments(output["answers"], args["questions"])
+        except ValueError as error:
+            raise OperationalProblem(f"Judge output contract violated: {error}",
+                                     code="invalid_model_response", effects="none") from error
+        return output
+
+    def model_request(self, block, request, *, max_tokens, invoke):
+        request = dict(component_id=block["id"], component=block["component"], **copy.deepcopy(request))
         def record_attempt(call):
             self.calls.append(call)
             self.save()
 
         try:
             turn, call = model_call(
-                meter=self.meter, scope=self.scope, request=request, max_tokens=self.client.max_tokens,
+                meter=self.meter, scope=self.scope, request=request, max_tokens=max_tokens,
                 remaining=self.remaining, time_origin=self.started, record_attempt=record_attempt,
-                invoke=lambda allowance, seconds: self.client.complete(
-                    tuple(messages), schema, max_output_tokens=allowance, timeout_seconds=seconds),
+                invoke=invoke,
             )
         finally:
             self.save()
@@ -443,7 +610,7 @@ class ControllerRuntime:
 
     def perform(self, capability_id, arguments, origin, action_id, component_id):
         self.check_time()
-        if self.actions_used >= self.limits.actions:
+        if self.remaining()['actions'] <= 0:
             raise BudgetExhausted("action_limit")
         if not isinstance(capability_id, str) or capability_id not in self.tools or not isinstance(arguments, dict):
             raise CandidateError("Tool requests require an available capability and object arguments")
@@ -582,6 +749,8 @@ class ControllerRuntime:
                     process.kill()
                 process.communicate(timeout=10)
                 self.record.update(stderr=stderr.decode(errors="replace"), elapsed_seconds=time.monotonic() - self.started)
+                self.record["timeout_wait_seconds"] = self.meter.timeout_wait_seconds - self.initial_timeout_wait_seconds
+                self.record["budget_seconds"] = max(0, self.record["elapsed_seconds"] - self.record["timeout_wait_seconds"])
                 self.save()
                 write_trace_report(self.record, self.trace_path.with_suffix(".html"))
         return copy.deepcopy(self.record)

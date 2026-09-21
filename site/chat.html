@@ -1,0 +1,87 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="theme-color" content="#0c1210">
+  <title>LoopBlox — Chat &amp; Loop</title>
+  <link rel="icon" href="data:,">
+  <link rel="stylesheet" href="/assets/chat.css">
+  <script src="/assets/chat.js" defer></script>
+</head>
+<body>
+  <header class="app-header">
+    <a href="/" class="brand"><span aria-hidden="true">▦</span> LoopBlox</a>
+    <span class="header-path">/ playground</span>
+    <div class="header-right"><span class="local-label"><i></i> LOCAL</span><button id="new-chat" class="small-button">＋ New chat</button></div>
+  </header>
+  <main class="workspace">
+    <section class="chat-pane" aria-labelledby="chat-heading">
+      <div class="pane-heading"><h1 id="chat-heading">Conversation</h1><span id="model-name" class="muted">Connecting…</span></div>
+      <div id="messages" class="messages" role="log" aria-label="Conversation">
+        <div id="welcome" class="welcome">
+          <div class="pixel-mark" aria-hidden="true">▦</div>
+          <h2>A conversation.<br>A loop you can follow.</h2>
+          <p>Send a message and watch the components run. Each reply has its own execution trail.</p>
+          <div class="suggestions">
+            <button data-prompt="Read the project note and explain what LoopBlox does in three sentences."><span>01</span> What does LoopBlox do?<b aria-hidden="true">↗</b></button>
+            <button data-prompt="Read the component reference and explain how context, decisions, execution, and observations work together."><span>02</span> Walk me through the components<b aria-hidden="true">↗</b></button>
+            <button data-prompt="Read the project note. What is the current research status?"><span>03</span> What is the research status?<b aria-hidden="true">↗</b></button>
+          </div>
+        </div>
+      </div>
+      <div id="chat-error" class="error-message" role="alert" hidden></div>
+      <form id="composer" class="composer">
+        <label for="message" class="sr-only">Your message</label>
+        <textarea id="message" placeholder="Ask something. Watch the loop work." rows="3" maxlength="12000" required disabled></textarea>
+        <div class="composer-bottom"><span id="composer-hint">Enter to send · Shift + Enter for a new line</span><button id="stop" type="button" class="stop-button" hidden>■ Stop</button><button id="send" type="submit" class="send-button" disabled>Send ↗</button></div>
+      </form>
+      <div class="chat-foot"><span>Conversation carries forward.</span><span>One loop run per message.</span></div>
+    </section>
+    <section class="loop-pane" aria-labelledby="loop-heading">
+      <div class="pane-heading"><h2 id="loop-heading">Inside the loop</h2><button id="follow-live" class="small-button" aria-pressed="true">● Following latest</button></div>
+      <div class="loop-content">
+        <div class="loop-summary"><div><span class="eyebrow">CURRENT COMPOSITION</span><h3>Reactive loop</h3></div><span class="file-tag">Python / read only</span></div>
+        <div class="stage-status" role="status"><span id="stage-dot" class="stage-dot"></span><span id="stage-name">Ready for a message</span><span id="turn-label">No run yet</span></div>
+        <div class="flow-scroll" tabindex="0" role="region" aria-label="Reactive loop diagram; scroll horizontally on small screens">
+          <svg class="loop-flow" viewBox="0 0 740 224" role="img" aria-labelledby="flow-title flow-description">
+            <title id="flow-title">The reactive Python loop</title>
+            <desc id="flow-description">Full history flows into a decision about the next step. A selected action is executed, its full result is observed, and the loop returns to history. A completion proposal returns the reply. Highlighting follows recorded component invocations.</desc>
+            <defs><marker id="flow-arrow" viewBox="0 0 8 8" refX="7" refY="4" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M1 1L7 4L1 7"/></marker></defs>
+            <path class="flow-wire" data-wire="decide" d="M76 94H259" marker-end="url(#flow-arrow)"/>
+            <path class="flow-wire" data-wire="execute" d="M283 94H459" marker-end="url(#flow-arrow)"/>
+            <path class="flow-wire" data-wire="observe_full" d="M483 94H656" marker-end="url(#flow-arrow)"/>
+            <path class="flow-wire" data-wire="context_full" d="M668 106V173Q668 185 656 185H88Q76 185 76 173V112" marker-end="url(#flow-arrow)"/>
+            <path class="flow-wire" data-wire="return" d="M271 82V31Q271 19 283 19H459" marker-end="url(#flow-arrow)"/>
+            <text class="path-label" x="369" y="211" text-anchor="middle">OBSERVE, THEN CONTINUE</text>
+            <text class="path-label" x="366" y="43" text-anchor="middle">IF DONE</text>
+            <g class="flow-node" data-stage="context_full" tabindex="0" role="button" aria-label="Full history component"><rect x="70" y="88" width="12" height="12"/><text x="76" y="132">Full history</text><text x="76" y="151" class="node-id">context_full</text></g>
+            <g class="flow-node" data-stage="decide" tabindex="0" role="button" aria-label="Decide next step component"><rect x="265" y="88" width="12" height="12"/><text x="271" y="132">Decide next step</text><text x="271" y="151" class="node-id">decide</text></g>
+            <g class="flow-node" data-stage="execute" tabindex="0" role="button" aria-label="Run tools component"><rect x="465" y="88" width="12" height="12"/><text x="471" y="132">Run tools</text><text x="471" y="151" class="node-id">execute</text></g>
+            <g class="flow-node" data-stage="observe_full" tabindex="0" role="button" aria-label="Full result component"><rect x="662" y="88" width="12" height="12"/><text x="668" y="132">Full result</text><text x="668" y="151" class="node-id">observe_full</text></g>
+            <g class="flow-node" data-stage="return"><rect x="465" y="13" width="12" height="12"/><text class="return-label" x="491" y="24">Return reply</text></g>
+            <text class="stage-count" data-stage-count="context_full" x="76" y="172">not run</text>
+            <text class="stage-count" data-stage-count="decide" x="271" y="172">not run</text>
+            <text class="stage-count" data-stage-count="execute" x="471" y="172">not run</text>
+            <text class="stage-count" data-stage-count="observe_full" x="668" y="172">not run</text>
+          </svg>
+        </div>
+        <div class="run-metrics"><span>Iteration <b id="iteration-count">—</b></span><span>Model calls <b id="model-count">0</b></span><span>Tool calls <b id="tool-count">0</b></span><span>Wall time <b id="elapsed-time">—</b></span></div>
+        <div class="source-panel">
+          <div class="panel-title"><span>▸ <span id="source-name">controllers/reactive.py</span></span><button id="copy-code" title="Copy the displayed Loop source">Copy</button></div>
+          <div id="source-code" class="source-code" aria-label="Current Loop Python source"></div>
+          <div class="source-foot"><span id="source-location">Waiting for execution</span><span id="source-hash"></span></div>
+        </div>
+        <div class="trail-heading"><h3>Execution trail</h3><span id="event-count">0 invocations</span></div>
+        <div id="event-trail" class="event-trail" aria-label="Recorded component invocations"><p class="empty-trail">Actual calls appear here as the loop runs.</p></div>
+        <details id="call-details" class="call-details">
+          <summary><span id="detail-title">Component details</span><span class="muted">Inspect ↓</span></summary>
+          <p id="detail-description">Select a stage to read its contract, or select a recorded call to inspect it.</p>
+          <pre id="detail-json"></pre>
+        </details>
+        <p class="loop-foot">Highlights follow host-recorded calls. Short calls remain in the trail. A returned reply is not a verified task score.</p>
+      </div>
+    </section>
+  </main>
+</body>
+</html>

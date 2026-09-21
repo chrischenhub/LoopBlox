@@ -1,0 +1,177 @@
+{
+  "as_of": "2026-09-15",
+  "title": "Retail DFS pilot: September 15 closeout",
+  "campaign": "dfs-top3-20260915-recovery-08",
+  "status": "interrupted",
+  "domain": "tau2-retail",
+  "model": "deepseek-v4-flash",
+  "sampling": "Historical sampling with replacement. The corrected fixed-task protocol has not been rerun.",
+  "scope": "Development tasks only. Branches use separate comparison batches; no across-branch ranking or holdout gain is established.",
+  "latest_recovery": {
+    "requested_task_attempts": 12,
+    "completed_scored_attempts": 12,
+    "new_missing_scores": 0,
+    "formal_submission_accepted": false,
+    "baseline_submission_rejections": 2,
+    "remaining_loop04_task_attempts": 0
+  },
+  "latest_model_calls": {
+    "total": 357,
+    "task_agent_and_user": 317,
+    "researcher": 40,
+    "statuses": {
+      "returned": 356,
+      "interrupted": 1
+    }
+  },
+  "cumulative_dfs": {
+    "attempts": 210,
+    "scored": 204,
+    "missing_scores": 6,
+    "model_calls": 6655,
+    "holdout_runs": 0
+  },
+  "branches": [
+    {
+      "name": "loop04",
+      "description": "Original starting Loop; latest recovery",
+      "status": "interrupted",
+      "candidate_id": "c0001",
+      "evaluation_id": "e0001",
+      "task_draws": [
+        "retail-development-0002",
+        "retail-development-0004",
+        "retail-development-0002",
+        "retail-development-0007",
+        "retail-development-0000"
+      ],
+      "distinct_tasks": 4,
+      "repeats": 1,
+      "candidate": {
+        "passed": 3,
+        "failed": 2,
+        "missing_scores": 0,
+        "attempts": 5,
+        "model_calls": 139,
+        "source_sha256": "79f723c710e9fd70bb02461bbc832a75abbf1b18117c1c2c568901f789637d8c"
+      },
+      "baseline": {
+        "passed": 5,
+        "failed": 0,
+        "missing_scores": 0,
+        "attempts": 5,
+        "model_calls": 138,
+        "source_sha256": "265e953ebbf684e72c98d381a45fc3a5b1e922c78ac9de25eab6b99d8eee96ba"
+      },
+      "source_record": "tau2/dfs-top3-20260915-recovery-08/branches/loop04/public/evaluations/e0001/result.json"
+    },
+    {
+      "name": "loop06",
+      "description": "Completion review and failure reflection",
+      "status": "submitted",
+      "candidate_id": "c0005",
+      "evaluation_id": "e0007",
+      "task_draws": [
+        "retail-development-0019",
+        "retail-development-0006",
+        "retail-development-0002",
+        "retail-development-0006",
+        "retail-development-0009"
+      ],
+      "distinct_tasks": 4,
+      "repeats": 1,
+      "candidate": {
+        "passed": 4,
+        "failed": 1,
+        "missing_scores": 0,
+        "attempts": 5,
+        "model_calls": 168,
+        "source_sha256": "ac7475b4b2ceecc05f5d4d0b3af93497c3a6a3c0e66ee12cf40b304cfd15e16a"
+      },
+      "baseline": {
+        "passed": 3,
+        "failed": 2,
+        "missing_scores": 0,
+        "attempts": 5,
+        "model_calls": 129,
+        "source_sha256": "265e953ebbf684e72c98d381a45fc3a5b1e922c78ac9de25eab6b99d8eee96ba"
+      },
+      "source_record": "tau2/dfs-top3-20260915-recovery-08/branches/loop06/public/evaluations/e0007/result.json"
+    },
+    {
+      "name": "loop08",
+      "description": "Opening plan and reflection after tool failure",
+      "status": "submitted",
+      "candidate_id": "c0002",
+      "evaluation_id": "e0005",
+      "task_draws": [
+        "retail-development-0009",
+        "retail-development-0019",
+        "retail-development-0009",
+        "retail-development-0002",
+        "retail-development-0008"
+      ],
+      "distinct_tasks": 4,
+      "repeats": 1,
+      "candidate": {
+        "passed": 5,
+        "failed": 0,
+        "missing_scores": 0,
+        "attempts": 5,
+        "model_calls": 132,
+        "source_sha256": "bdf1ee2686f77f0e9126b1c63199049a0dc184896278e04069ac78b9019eb014"
+      },
+      "baseline": {
+        "passed": 5,
+        "failed": 0,
+        "missing_scores": 0,
+        "attempts": 5,
+        "model_calls": 119,
+        "source_sha256": "265e953ebbf684e72c98d381a45fc3a5b1e922c78ac9de25eab6b99d8eee96ba"
+      },
+      "source_record": "tau2/dfs-top3-20260915-recovery-08/branches/loop08/public/evaluations/e0005/result.json"
+    }
+  ],
+  "provenance": {
+    "source_root": ".artifacts/",
+    "scope": "Allowlisted aggregate outcomes only. Raw records remain local; paths identify source files and are not public download URLs. Frozen implementation and prior results were not modified.",
+    "files": {
+      "tau2/dfs-top3-20260915-recovery-08/recovery-outcome.json": {
+        "sha256": "3f6bbf0514bde47bb94c8965d59e6f58303c99b3097f2e66da7f25034f17a1ad",
+        "bytes": 2367
+      },
+      "tau2/dfs-top3-20260915-recovery-08/closeout.md": {
+        "sha256": "c1cb33960b91464c08b04e953a9b85b0b23518bfcf2ec2ce52bf8233af8432e9",
+        "bytes": 3556
+      },
+      "tau2/dfs-top3-20260915-recovery-08/analysis.json": {
+        "sha256": "11d87d4d158c982f84e9a48af51b1100a46b54fb7d113647e25e9126ca7aad9a",
+        "bytes": 332
+      },
+      "tau2/dfs-top3-20260915-recovery-08/report.md": {
+        "sha256": "eb3ada22a7e5f428eaf4b47031d24fa291fd2e13e72588fe8a2550861ecdd29b",
+        "bytes": 5019
+      },
+      "tau2/dfs-top3-20260915-recovery-08/protocol.json": {
+        "sha256": "fb3ba1a6e1e893351bf6c1ecdba7d1493fe40200be9ff55b846c9624682d2a5f",
+        "bytes": 3477839
+      },
+      "tau2/dfs-top3-20260915-recovery-08/operator-stop.json": {
+        "sha256": "d254d1890fd551f8cd0c7b8856d975c918b3881cd9e6d71665d06cd79cd00d5c",
+        "bytes": 390
+      },
+      "tau2/dfs-top3-20260915-recovery-08/branches/loop04/public/evaluations/e0001/result.json": {
+        "sha256": "680c34a7d0bac3cbc4f9fd24154d807803af4d3d0d15c43c5220b67ddf40e437",
+        "bytes": 20333
+      },
+      "tau2/dfs-top3-20260915-recovery-08/branches/loop06/public/evaluations/e0007/result.json": {
+        "sha256": "6c6e3ab43ed6a9d63249b886015f63dc5d81d7f81a3fc63b2aaab0fe5e91ec76",
+        "bytes": 20562
+      },
+      "tau2/dfs-top3-20260915-recovery-08/branches/loop08/public/evaluations/e0005/result.json": {
+        "sha256": "2e97c5c9973326d4732b52fc2614add2ccd79dd765cf51153ad5c678dc4232c7",
+        "bytes": 20469
+      }
+    }
+  }
+}

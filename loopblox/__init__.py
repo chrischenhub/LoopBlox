@@ -16,7 +16,7 @@ def snapshot_implementation(root):
         *(ROOT / "experiments").glob("*.json"),
         *(path for path in (ROOT / "docs").rglob("*") if path.suffix in {".md", ".json"}),
         *(ROOT / name for name in ("AGENTS.md", "README.md", "CONTROLLER.md",
-                                  "loop.md", "COMPONENTS.md")),
+                                  "loop.md", "COMPONENTS.md", "experiment.md")),
     ])
     for path in sources:
         target = root / "implementation" / path.relative_to(ROOT)

@@ -21,6 +21,22 @@ def model_settings(client):
     return {key: getattr(client, key) for key in ("model", "base_url", "temperature", "max_tokens", "timeout")}
 
 
+def native_researcher_usage(episode):
+    """Native completed-turn totals are separate from the host's model-attempt ledger."""
+    private = Path(episode) / "private"
+    for name in ("native-researcher.json", "research-trace.json"):
+        path = private / name
+        if not path.is_file():
+            continue
+        record = json.loads(path.read_text())
+        if "native_usage" in record:
+            return record["native_usage"]
+        if record.get("configuration", {}).get("kind") == "native_codex":
+            return dict(model_attempts=None, cost_usd=None, input_tokens=None, output_tokens=None,
+                        coverage="Native research has no completed usage summary yet; values remain unknown.")
+    return None
+
+
 def comparison_plan(candidates, tasks, repeats=1):
     """Preallocate paired runs, rotating candidates by task index plus repeat."""
     names = list(candidates)
@@ -85,6 +101,7 @@ def run_study(args, *, load_suite, runner_factory, include_mixed=False, extra_se
                 research_status=session.state.get("research_status", session.state["status"]),
                 experiment=session.experiment, component_proposals=list(session.state["proposals"]),
                 research_usage=session.meter.summary() if hasattr(session, "meter") else model_usage([]),
+                native_researcher_usage=native_researcher_usage(session.output),
                 development_task_runs=session.state["task_runs_used"],
                 final_runs=[{**row, "directory": "../../" + row["directory"]} for row in rows],
                 final_summary=summarize(rows),
@@ -113,8 +130,9 @@ def run_study(args, *, load_suite, runner_factory, include_mixed=False, extra_se
                 experiment={**experiment, "question": experiment["question"] + f" Search condition: {condition}."},
                 baseline_source=baseline, max_task_runs=args.development_runs * factor,
                 research_seconds=args.research_seconds * factor,
-                research_output_tokens=args.research_output_tokens * factor,
-                research_model_calls=args.research_model_calls * factor, task_limits=limits, seed=args.seed + index,
+                research_output_tokens=None if args.research_output_tokens is None else args.research_output_tokens * factor,
+                research_model_calls=None if args.research_model_calls is None else args.research_model_calls * factor,
+                task_limits=limits, seed=args.seed + index,
             )
             sessions[condition] = session
             print("Searching reusable Loop: " + condition, flush=True)
@@ -240,13 +258,22 @@ def write_report(output):
     for family, episode in state["episodes"].items():
         result = episode["result"]
         usage = result["research_usage"]
+        native = result.get("native_researcher_usage")
+        native_cost = (f' Native researcher: {native.get("input_tokens") if native.get("input_tokens") is not None else "unknown"} input / '
+                       f'{native.get("output_tokens") if native.get("output_tokens") is not None else "unknown"} output tokens; provider attempts and subscription cost unknown;'
+                       if native is not None else "")
+        trace_path = "episodes/" + family + "/private/research-trace"
+        trace_link = (link(trace_path + ".html", "research trace") if (output / (trace_path + ".html")).exists()
+                      else link(trace_path + ".json", "research trace") if (output / (trace_path + ".json")).exists()
+                      else "research trace not produced")
         searches.append(f'<li>{escape(family)}: {result["development_task_runs"]} development runs; '
-                        f'{usage["model_calls"]} research + development model calls; '
+                        f'{usage["model_calls"]} host gateway model attempts; '
                         f'{usage["model_input_tokens"]} input / {usage["model_output_tokens"]} output tokens; '
+                        f'{escape(native_cost)} '
                         f'research status: {escape(result["research_status"])}; '
                         f'{link(episode["path"], "episode result")}, '
                         f'{link("episodes/" + family + "/private/setup.json", "frozen settings")}, '
-                        f'{link("episodes/" + family + "/private/research-trace.html", "research trace") if (output / "episodes" / family / "private/research-trace.html").exists() else "research trace not produced"}</li>')
+                        f'{trace_link}</li>')
     document = f'''<!doctype html><html lang="en"><meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1"><title>LoopBlox · Loop experiment</title>
 <meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src 'unsafe-inline'">

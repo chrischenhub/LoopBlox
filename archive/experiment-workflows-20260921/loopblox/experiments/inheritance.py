@@ -15,7 +15,7 @@ from loopblox.runtime.components import catalog
 from loopblox.runtime.controller import Limits, model_usage
 from loopblox.runtime.model import ChatCompletionsClient
 from loopblox.runtime.io import atomic_json, atomic_text, digest, image_id
-from loopblox.experiments.study import BASELINE_CONTROLLER, model_settings
+from loopblox.experiments.study import BASELINE_CONTROLLER, model_settings, native_researcher_usage
 from loopblox.benchmarks.tau2 import Tau2Runner, load_suite
 
 
@@ -24,22 +24,26 @@ CONDITIONS = ("independent", "loop", "loop_memory")
 
 def episode_budget(protocol, item):
     spent = [attempt["spent"] for attempt in item.get("prior_attempts", [])]
-    return {key: cap - sum(attempt[key] for attempt in spent)
+    return {key: None if cap is None else cap - sum(attempt[key] for attempt in spent)
             for key, cap in protocol["research_budgets"].items()}
 
 
-def prepare_resume(source, root):
+def prepare_resume(source, root, *, reporter=None):
     """Preserve completed episodes; rerun unfinished ones within their unspent caps."""
     source, root = Path(source).resolve(), Path(root).resolve()
     protocol, old_state = read(source / "protocol.json"), read(source / "result.json")
     if old_state["status"] not in {"incomplete", "interrupted"}:
         raise ValueError("Recovery requires a stopped campaign")
-    previous_check = source / "training-check"
+    comparison_directory = protocol.get("comparison_directory", "training-check")
+    previous_check = source / comparison_directory
     if previous_check.exists() and any(item["status"] != "complete" for item in old_state["episodes"]):
         raise ValueError("Checkpoint recovery requires all research to have completed")
     for name, sha in protocol["implementation_sha256"].items():
         if digest((source / "implementation" / name).read_bytes()) != sha:
             raise ValueError("Original frozen implementation changed: " + name)
+        if not (ROOT / name).is_file():
+            raise ValueError("The campaign uses an archived source: " + name
+                             + ". Use its original frozen implementation for historical recovery.")
         if name not in {"loopblox/runtime/model.py", "loopblox/runtime/controller.py", "loopblox/experiments/inheritance.py", "loopblox/experiments/common.py", "loopblox/benchmarks/run_tau2.py", "AGENTS.md", "README.md"}:
             if digest((ROOT / name).read_bytes()) != sha:
                 raise ValueError("Recovery must preserve the research instructions, component library and environment: " + name)
@@ -57,6 +61,13 @@ def prepare_resume(source, root):
     old_items = {item["label"]: item for item in old_state["episodes"]}
     imported_hashes = {str(path.relative_to(root)): digest(path.read_bytes())
                        for path in (root / "private/prior-attempts").rglob("*") if path.is_file()}
+    if protocol.get("initial_source"):
+        initial = protocol["initial_source"]
+        path = source / initial["path"]
+        if digest(path.read_bytes()) != initial["sha256"]:
+            raise ValueError("Initial source changed")
+        shutil.copyfile(path, root / initial["path"])
+        imported_hashes[initial["path"]] = initial["sha256"]
     reused, remaining = [], []
     for item in protocol["episodes"]:
         old_item = old_items[item["label"]]
@@ -76,14 +87,19 @@ def prepare_resume(source, root):
             shutil.copytree(old_episode, destination)
             state, result = read(old_episode / "private/state.json"), read(old_episode / "result.json")
             usage = model_usage(read(old_episode / "private/research-usage.json")["calls"])
-            seconds = result.get("elapsed_seconds")
+            seconds = result.get("budget_seconds", result.get("elapsed_seconds"))
             if seconds is None:
                 # Older episodes have no overall duration; charge their conservative wall-clock envelope.
                 seconds = (old_episode / "result.json").stat().st_mtime - (old_episode / "private/setup.json").stat().st_mtime
             attempts.append(dict(directory=str(destination.relative_to(root)),
                 spent=dict(task_runs=state["task_runs_used"], model_calls=usage["model_calls"],
                            output_tokens=usage["charged_output_tokens"], seconds=math.ceil(max(0, seconds))),
-                seconds_basis="recorded episode duration" if "elapsed_seconds" in result else "setup-to-result file timestamps, rounded up"))
+                seconds_basis=("recorded charged episode time, excluding timeout waits" if "budget_seconds" in result
+                               else "recorded episode duration" if "elapsed_seconds" in result
+                               else "setup-to-result file timestamps, rounded up")))
+            if "candidate_limit" in item.get("session_options", {}):
+                initial_count = 2 if len(state.get("evaluations", [])) and len(state["evaluations"][0]["candidate_ids"]) == 2 else 1
+                item["session_options"]["candidate_limit"] -= max(0, len(state["candidates"]) - initial_count)
         else:
             continue
         for path in destination.rglob("*"):
@@ -92,14 +108,15 @@ def prepare_resume(source, root):
     for item in protocol["episodes"]:
         if item["label"] not in reused:
             budget = episode_budget(protocol, item)
-            if min(budget.values()) <= 0 or budget["task_runs"] < 2:
+            opening = item.get("session_options", {}).get("opening_n", 1)
+            if any(cap is not None and cap <= 0 for cap in budget.values()) or budget["task_runs"] < 2 * opening:
                 raise ValueError("No complete opening comparison fits the remaining budget: " + item["label"])
             remaining.append(dict(label=item["label"], budget=budget))
     if previous_check.exists():
         # A new comparator continues only unstarted rows. Prior attempts remain exact,
         # including interrupted/unscored rows; no task or model attempt is replayed.
         read(previous_check / "result.json")
-        destination = root / "training-check/private/prior-check"
+        destination = root / comparison_directory / "private/prior-check"
         shutil.copytree(previous_check, destination)
         for path in destination.rglob("*"):
             if path.is_file():
@@ -118,7 +135,7 @@ def prepare_resume(source, root):
     atomic_json(root / "protocol.json", protocol)
     atomic_json(root / "result.json", dict(status="prepared", episodes=[{**item,
         "status": "complete" if item["label"] in reused else "not_started"} for item in protocol["episodes"]]))
-    report(root)
+    (reporter or report)(root)
     print(json.dumps(dict(output=str(root), reused=reused, remaining=remaining,
         max_new_research_runs=sum(row["budget"]["task_runs"] for row in remaining), holdout_runs=0)), flush=True)
     return root
@@ -162,7 +179,7 @@ def prepare(args):
         "every researcher closes. Those checks never return to research and are training evidence, not holdout."))
     budgets = dict(task_runs=args.development_runs, seconds=args.research_seconds,
                    model_calls=args.research_model_calls, output_tokens=args.research_output_tokens)
-    if min(budgets.values()) <= 0 or budgets["task_runs"] < 2:
+    if any(cap is not None and cap <= 0 for cap in budgets.values()) or budgets["task_runs"] < 2:
         raise ValueError("Each round needs positive budgets and at least two initial-comparison slots")
     protocol = dict(conditions=CONDITIONS, rounds=args.rounds, episodes=episodes, research_budgets=budgets, concurrency=1,
         model=model_settings(client), user_model=model_settings(user), worker_image=worker, task_limits=vars(limits),
@@ -190,12 +207,18 @@ def prepare(args):
     return root
 
 
-def episode(root, label):
+def episode(root, label, *, session_type=ResearchSession):
     protocol = verify(root)
     item = next(e for e in protocol["episodes"] if e["label"] == label)
     output = root / item["directory"]
     starting, experience = None, None
     parent_hash = None
+    if not item["parent"] and protocol.get("initial_source"):
+        initial = protocol["initial_source"]
+        source = root / initial["path"]
+        if digest(source.read_bytes()) != initial["sha256"]:
+            raise ValueError("Initial Loop source changed")
+        starting = source.read_text()
     if item["parent"]:
         parent = root / item["parent"]
         result = read(parent / "result.json")
@@ -215,7 +238,8 @@ def episode(root, label):
     runner = Tau2Runner(root / "suite", manifest, client, user, protocol["worker_image"], limits,
                         root / "private/environments" / label)
     budget = episode_budget(protocol, item)
-    session = ResearchSession(output=output, development=tuple(protocol["task_ids"]), holdout=(), run_task=runner,
+    session = session_type(output=output, development=tuple(item.get("task_ids", protocol["task_ids"])),
+        holdout=tuple(protocol.get("holdout_task_ids", ())), run_task=runner,
         research_client=client, worker_image=protocol["worker_image"],
         setup=dict(model=protocol["model"], user_model=protocol["user_model"], condition=item["condition"],
                    round=item["round"], parent=item["parent"], parent_state_sha256=parent_hash,
@@ -223,7 +247,8 @@ def episode(root, label):
         experiment=protocol["experiment"], baseline_source=BASELINE_CONTROLLER.read_text(),
         starting_source=starting, experience=experience, max_task_runs=budget["task_runs"],
         research_seconds=budget["seconds"], research_model_calls=budget["model_calls"],
-        research_output_tokens=budget["output_tokens"], task_limits=limits, seed=item["seed"])
+        research_output_tokens=budget["output_tokens"], task_limits=limits, seed=item["seed"],
+        **item.get("session_options", {}))
     result = dict(status="running", **item)
     atomic_json(output / "result.json", result)
     started = time.monotonic()
@@ -242,6 +267,8 @@ def episode(root, label):
                       elapsed_seconds=time.monotonic() - started)
         if hasattr(session, "meter"):
             result["usage"] = session.meter.summary()
+            result["budget_seconds"] = max(0, result["elapsed_seconds"] - result["usage"]["timeout_wait_seconds"])
+        result["native_researcher_usage"] = native_researcher_usage(session.output)
         atomic_json(output / "result.json", result)
         print(json.dumps({k: result.get(k) for k in ("label", "status", "selected", "task_runs", "usage")}), flush=True)
 
@@ -333,7 +360,7 @@ def run(root):
 
 def report(root):
     protocol, state = read(root / "protocol.json"), read(root / "result.json")
-    calls, rows = [], []
+    calls, rows, native_records = [], [], []
     aliases = read(root / "check-plan.json")["aliases"] if (root / "check-plan.json").exists() else {}
     comparison_path = root / "training-check/result.json"
     if not comparison_path.exists():
@@ -347,7 +374,7 @@ def report(root):
     for item in sorted(state["episodes"], key=lambda e: (e["round"], CONDITIONS.index(e["condition"]))):
         output = root / item["directory"]
         evidence, usage, selected, memory_reads, novel = {}, {}, "—", 0, 0
-        episode_calls, old_runs = [], 0
+        episode_calls, old_runs, native_attempts = [], 0, []
         for attempt in item.get("prior_attempts", []):
             previous = root / attempt["directory"]
             recorded = read(previous / "private/research-usage.json")["calls"]
@@ -355,6 +382,9 @@ def report(root):
             episode_calls.extend(recorded)
             retained_calls.extend(recorded)
             old_runs += attempt["spent"]["task_runs"]
+            native = native_researcher_usage(previous)
+            if native is not None:
+                native_attempts.append(dict(directory=attempt["directory"], usage=native))
         prior_runs += old_runs
         total_runs += old_runs
         counts[item["condition"]] += old_runs
@@ -380,14 +410,24 @@ def report(root):
         calls.extend(episode_calls)
         chain_calls[item["condition"]].extend(episode_calls)
         usage = model_usage(episode_calls)
+        native = native_researcher_usage(output)
+        if native is not None:
+            native_attempts.append(dict(directory=item["directory"], usage=native))
+        native_records.extend(native_attempts)
         trace = output / "private/research-trace.json"
         if trace.exists():
-            history = read(trace)["history"]
+            recorded_trace = read(trace)
+            history = recorded_trace.get("history", [])
             successful = {event["action_id"] for event in history
                           if event["type"] == "tool_result" and event["status"] == "ok"}
             memory_reads = sum(event["type"] == "tool_call" and event["capability_id"] == "read_artifact"
                                and event["arguments"].get("path", "").startswith("experience/")
                                and event["action_id"] in successful for event in history)
+            if "history" not in recorded_trace:
+                memory_reads = sum(call.get("outcome", {}).get("status") == "ok"
+                    and call.get("request", {}).get("tool") == "read_artifact"
+                    and call["request"]["arguments"].get("path", "").startswith("experience/")
+                    for call in recorded_trace.get("calls", []))
         final = [row for row in comparison.get("comparisons", []) if row["candidate"] == aliases.get(item["label"])]
         score = None
         if len(final) == len(protocol["task_ids"]) and all(row.get("verification_verdict") in {"pass", "fail"} for row in final):
@@ -398,6 +438,9 @@ def report(root):
             reused=item["label"] in reused, cumulative_task_runs=counts[item["condition"]],
             model_calls=usage.get("model_calls", 0), selected=selected, new_source_count=novel,
             usage=usage, cumulative_usage=model_usage(chain_calls[item["condition"]]),
+            native_researcher_usage=native_attempts,
+            experience_read_coverage="Successful host read_artifact receipts for experience/ only; "
+                                     "shell and native file reads are not counted.",
             experience_reads=memory_reads, training_passes=score, best_submitted_training_passes=best[item["condition"]]))
     search_usage = model_usage(calls)
     from loopblox.benchmarks.run_tau2 import comparison_calls
@@ -406,23 +449,26 @@ def report(root):
     analysis = dict(status=state["status"], episodes=rows, research_task_runs=total_runs, training_check_runs=check_runs,
         total_task_runs=total_runs + check_runs, research_usage=search_usage, training_check_usage=model_usage(check_calls),
         total_usage=model_usage(calls + check_calls), holdout_runs=0,
+        native_researcher_usage=native_records,
         reused_completed_task_runs=reused_runs, prior_attempt_task_runs=prior_runs,
         new_research_task_runs=total_runs-reused_runs-prior_runs, retained_usage=model_usage(retained_calls))
     atomic_json(root / "analysis.json", analysis)
     lines = ["# Loop inheritance · training-only pilot", "", f"Status: **{state['status']}**.", "",
-        "| Condition / round | Status | Task runs / cumulative | Model requests / cumulative | New sources | Experience reads | Training score |",
+        "| Condition / round | Status | Task runs / cumulative | Host model attempts / cumulative | New sources | Experience artifact reads | Training score |",
         "| --- | --- | ---: | ---: | ---: | ---: | ---: |"]
     for row in rows:
         score = "pending" if row["training_passes"] is None else f"{row['training_passes']}/{len(protocol['task_ids'])}"
         lines.append(f"| [{row['label']}]({row['directory']}/public/evidence.json) | {row['status']} | "
                      f"{row['task_runs']} / {row['cumulative_task_runs']} | {row['model_calls']} / {row['cumulative_usage']['model_calls']} | "
                      f"{row['new_source_count']} | {row['experience_reads']} | {score} |")
-    lines += ["", f"Actual totals: {analysis['total_task_runs']} task runs; {analysis['total_usage']['model_calls']} model requests. "
-              "All agent, researcher and simulated-user requests are counted, including failures. Unknown usage remains unknown.", "",
+    lines += ["", f"Actual totals: {analysis['total_task_runs']} task runs; {analysis['total_usage']['model_calls']} host gateway model attempts. "
+              "Native researcher tokens are recorded separately in analysis.json; native provider attempt counts "
+              "and subscription prices remain unknown.", "",
               f"Caps: {protocol['max_research_runs']} research task runs + {protocol['max_training_check_runs']} checkpoint checks. "
               "Unused budget is not moved between rounds. Identical submitted sources share one check, with aliases in check-plan.json.", "",
               protocol["design"], "", "Source novelty means exact source bytes, not a new behavioral mechanism. "
-              "Experience reads show access, not correct understanding. Final checks are training evidence on previously used tasks. "
+              "Experience artifact reads count successful host read_artifact receipts only; shell and native file reads "
+              "are not counted. Reads show access, not correct understanding. Final checks are training evidence on previously used tasks. "
               "Researcher descriptions remain hypotheses; use host-derived evidence and paired records to verify them.", "",
               "[Frozen protocol](protocol.json) · [Full accounting](analysis.json) · [Training comparison](training-check/report.html)", ""]
     if "recovery" in protocol:

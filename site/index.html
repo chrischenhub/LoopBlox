@@ -15,7 +15,7 @@
 <a class="skip-link" href="#research">Skip to the research loop</a>
 <header class="topbar">
   <a class="brand" href="#top"><span class="brand-mark" aria-hidden="true">▦</span>LoopBlox</a>
-  <nav aria-label="Main navigation"><a href="#research">Research</a><a href="#components">Components</a><a href="#domains">Domain study</a><a href="#status">Status</a></nav>
+  <nav aria-label="Main navigation"><a href="#research">Research</a><a href="#components">Components</a><a href="#domains">Domain study</a><a href="#status">Results</a></nav>
   <span class="edition">AN OPEN RESEARCH PROJECT</span>
 </header>
 <main id="top">
@@ -24,12 +24,12 @@
     <h1 id="site-title">LoopBlox<span class="cursor" aria-hidden="true">_</span></h1>
     <p class="hero-title">Automatic research for <em>domain-specific</em> agent loops.</p>
     <p class="hero-copy">Compose agent behaviors in Python. A research agent explores alternative loops,
-      scores them, and carries one selection into a held-out comparison.</p>
+      evaluates them on development tasks, and preserves the evidence behind each selection.</p>
     <div class="hero-actions">
       <a class="btn primary" href="#research">The research loop</a>
       <a class="btn" href="baseline.py" download>Download baseline.py</a>
     </div>
-    <p class="hero-facts"><span>__COMPONENT_COUNT__ components</span><span>__FAMILY_COUNT__ families</span><span>τ²-bench retail + telecom</span><span>Domain study planned</span></p>
+    <p class="hero-facts"><span>__COMPONENT_COUNT__ components</span><span>__FAMILY_COUNT__ families</span><span>Release benchmark: τ²-bench telecom</span><a href="#status">Latest results / __RESULT_DATE__ ↓</a></p>
   </section>
 
   <section id="research" class="section" aria-labelledby="research-title">
@@ -127,7 +127,7 @@
       <div class="diagram-scroll" tabindex="0" role="region" aria-label="Reactive baseline task loop, scroll horizontally on smaller screens">
         <svg class="flow-diagram baseline-diagram" viewBox="0 0 1180 288" width="1180" height="288" role="img" aria-labelledby="baseline-svg-title baseline-svg-desc">
           <title id="baseline-svg-title">The reactive baseline task loop</title>
-          <desc id="baseline-svg-desc">Gather the whole history, then think and choose: one tool action, or a proposal that the task is done. For an action, run the tool and record the full result, then gather the history again. A completion proposal returns from the controller. Authoritative scoring occurs after the worker closes.</desc>
+          <desc id="baseline-svg-desc">Gather the whole history, then reason and decide: one tool action, or a proposal that the task is done. For an action, run the tool and record the full result, then gather the history again. A completion proposal returns from the controller. Authoritative scoring occurs after the worker closes.</desc>
           <path class="wire" marker-end="url(#arrow)" d="M 72 153 H 234 M 250 153 H 460 M 484 153 H 694 M 710 153 H 920"/>
           <path class="pulse" d="M 72 153 H 932"/>
           <path class="wire return-wire" marker-end="url(#arrow)" d="M 939 153 H 1020 Q 1040 153 1040 173 V 243 Q 1040 263 1020 263 H 185 Q 165 263 165 243 V 173 Q 165 153 185 153 H 234"/>
@@ -138,7 +138,7 @@
           <text class="small-label" x="585" y="135" text-anchor="middle">ACTION SELECTED</text>
           <g class="flow-node"><rect x="60" y="147" width="12" height="12"/><text x="66" y="192">Task</text><text class="node-note" x="66" y="216">the request</text></g>
           <g class="flow-node"><rect x="236" y="147" width="12" height="12"/><text x="242" y="192">Full history</text><text class="node-note" x="242" y="216">everything so far</text></g>
-          <g class="flow-node checkpoint"><path d="M 472 144 L 481 153 L 472 162 L 463 153 Z"/><text x="472" y="192">Think and choose</text><text class="node-note" x="472" y="216">one action, or done</text></g>
+          <g class="flow-node checkpoint"><path d="M 472 144 L 481 153 L 472 162 L 463 153 Z"/><text x="472" y="192">Decide next step</text><text class="node-note" x="472" y="216">one action, or done</text></g>
           <g class="flow-node"><rect x="696" y="147" width="12" height="12"/><text x="702" y="192">Run the tool</text><text class="node-note" x="702" y="216">the chosen action</text></g>
           <g class="flow-node"><rect x="926" y="147" width="12" height="12"/><text x="932" y="192">Full result</text><text class="node-note" x="932" y="216">kept in the history</text></g>
           <g class="flow-node checkpoint"><rect x="1094" y="147" width="12" height="12"/><text x="1100" y="192">Return</text><text class="node-note" x="1100" y="216">the loop ends</text></g>
@@ -146,16 +146,16 @@
       </div>
       <figcaption class="panel-foot"><span>The whole history in, one chosen action out, the full result recorded.</span><span>TASK LOOP / reactive.py</span></figcaption>
     </figure>
-    <div class="composition-note"><p>Research can swap in a different context strategy, planning, review, or recovery. The host keeps isolation, factual history, budgets, and scoring.</p><details class="source-disclosure"><summary>Read the baseline Python</summary><pre><code>__BASELINE__</code></pre></details></div>
+    <div class="composition-note"><p>A Plan can focus decisions on one objective at a time. Choose compares original proposals; Critique assesses their evidence. Context can retain a summary, and brief results can be read page by page or in full. Python owns continuation; the host owns isolation, factual history, budgets, and scoring.</p><details class="source-disclosure"><summary>Read the baseline Python</summary><pre><code>__BASELINE__</code></pre></details></div>
     <div class="family-grid">__FAMILIES__</div>
     <div id="component-detail" class="component-detail" aria-live="polite"><div><span class="eyebrow">Component contracts</span><h3 class="prompt">Choose a behavior to read its contract.</h3></div><p>Families organize the catalog. Python decides which components run, in what order, under which conditions.</p><a class="link-out" href="component-contracts.md" download>Download contracts ↓</a></div>
   </section>
 
   <section id="domains" class="section" aria-labelledby="domains-title">
     <div class="section-head">
-      <span class="section-label">03 / The first domain study</span>
+      <span class="section-label">03 / A separate proposed comparison</span>
       <h2 id="domains-title">Specialist loops, shared evaluation.</h2>
-      <p class="section-intro">With one model and one component library: can a loop researched for a single domain beat the baseline, and beat a loop researched across both, on unseen tasks?</p>
+      <p class="section-intro">The current release focuses on telecom, with deterministic official scoring. This separate proposed study asks whether domain-specific loops outperform a shared loop on held-out tasks.</p>
       <span class="section-count">τ²-bench / retail + telecom</span>
     </div>
     <figure class="panel diagram-shell">
@@ -192,10 +192,33 @@
 
   <section id="status" class="section status-section" aria-labelledby="status-title">
     <div class="section-head">
-      <span class="section-label">04 / Current status</span>
-      <h2 id="status-title">The research loop runs.<br>The domain question is still open.</h2>
+      <span class="section-label">04 / Latest experiment results</span>
+      <h2 id="status-title">Baseline led the latest comparison.</h2>
+      <p class="section-intro">The retail DFS pilot has two submitted branches. The latest recovery finished its task evaluations, then stopped at submission.</p>
+      <span class="section-count"><time datetime="__RESULT_DATE__">__RESULT_DATE__</time> / τ²-bench retail / __RESULT_MODEL__</span>
     </div>
-    <div class="status-copy"><p>Small live runs have exercised autonomous research, selection, accounting, and evaluation after research closes. Formal domain experiments have not started; no optimization gain has been established.</p><dl><div><dt>First domain study</dt><dd>Audited τ²-bench retail and telecom subsets.</dd></div><div><dt>Current pilot</dt><dd>Random Loop screening and depth-first search on development tasks.</dd></div><div><dt>Next artifact direction</dt><dd>SpreadsheetBench 2 modeling and debugging; integration pending.</dd></div></dl></div>
+    <div class="panel results-panel">
+      <div class="panel-bar"><span>▸ retail-dfs / development results</span><span class="result-status">interrupted</span></div>
+      <div class="results-scroll" tabindex="0" role="region" aria-label="Branch comparisons, scroll horizontally on smaller screens">
+        <table class="results-table">
+          <caption>Last paired batch for each branch. Each score is passes / task runs.</caption>
+          <thead><tr><th scope="col">Evaluated Loop</th><th scope="col">Loop</th><th scope="col">Baseline</th><th scope="col">Model calls<br>Loop / baseline</th><th scope="col">Submission</th></tr></thead>
+          <tbody>__RESULT_ROWS__</tbody>
+        </table>
+      </div>
+      <div class="panel-foot"><span>Calls include the task agent and simulated user.</span><span>SEPARATE PAIRED BATCHES</span></div>
+    </div>
+    <div class="result-notes">
+      <p>__RESULT_CLOSEOUT__</p>
+      <p>The historical sampler drew with replacement: each batch above covers four distinct tasks across five draws. Branches used different batches, so their scores do not rank the branches against one another. No validation or holdout was run.</p>
+    </div>
+    <div class="results-accounting">
+      <h3>Cumulative DFS, including recovery attempts</h3>
+      <dl class="result-metrics">__RESULT_METRICS__</dl>
+      <p>Earlier BFS screening is excluded. Model attempts include research, task agents, simulated users, and interrupted requests.</p>
+    </div>
+    <div class="result-downloads"><a class="link-out" href="experiment-report.md" download>Read the experiment report ↓</a><a class="link-out" href="results.json" download>Results + source hashes ↓</a></div>
+    <div class="status-copy"><dl><div><dt>Current release</dt><dd>Telecom loop research with Jev evidence and deterministic official scoring. Development closes for review before any final comparison.</dd></div><div><dt>Historical results</dt><dd>The corrected BFS/DFS protocol has not been rerun. The retail results above remain the preserved historical experiment.</dd></div></dl></div>
   </section>
 </main>
 <footer class="page-foot"><a class="brand" href="#top">LoopBlox</a><span>COMPOSABLE BEHAVIORS / VERIFIABLE TASKS / AUTOMATIC RESEARCH</span><a class="link-out" href="component-contracts.md" download>Component reference ↓</a></footer>

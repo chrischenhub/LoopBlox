@@ -1,0 +1,41 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1280" height="320" viewBox="0 0 1280 320" role="img" aria-labelledby="title desc">
+  <title id="title">Search for better agent loops.</title>
+  <desc id="desc">An ink-green banner with mint lettering and an abstract loop of connected blocks, matching the LoopBlox website.</desc>
+  <defs>
+    <pattern id="grid" width="24" height="24" patternUnits="userSpaceOnUse">
+      <path d="M24 0H0V24" fill="none" stroke="#7fdcc0" stroke-opacity=".06"/>
+    </pattern>
+  </defs>
+  <rect width="1280" height="320" fill="#0c1210"/>
+  <rect width="1280" height="320" fill="url(#grid)"/>
+  <rect x="16.5" y="16.5" width="1247" height="287" fill="none" stroke="#32453e"/>
+  <path d="M16 40V16H40M1240 304H1264V280" fill="none" stroke="#7fdcc0" stroke-width="2"/>
+
+  <g font-family="ui-monospace, 'SFMono-Regular', Menlo, Consolas, monospace">
+    <rect x="56" y="55" width="8" height="8" fill="#7fdcc0"/>
+    <text x="78" y="66" fill="#a4bdb0" font-size="16" letter-spacing="2">LOOPBLOX / COMPONENT RESEARCH</text>
+    <g fill="#e9efe9" font-size="47" font-weight="600" letter-spacing="-2">
+      <text x="54" y="143">Search for better</text>
+      <text x="54" y="201" fill="#7fdcc0">agent loops.</text>
+    </g>
+    <text x="56" y="264" fill="#a4bdb0" font-size="16" letter-spacing="1">COMPOSE / EVALUATE / SEARCH</text>
+  </g>
+
+  <g fill="none" stroke="#4d9682" stroke-width="2">
+    <path d="M916 102H1060M1108 150V222H964M916 222H868V150"/>
+    <path d="M1025 97L1030 102L1025 107M999 217L994 222L999 227"/>
+  </g>
+  <g stroke-width="2">
+    <rect x="830" y="64" width="84" height="84" fill="#060d09"/>
+    <rect x="822" y="56" width="84" height="84" fill="#172c24" stroke="#7fdcc0"/>
+    <rect x="1074" y="64" width="84" height="84" fill="#060d09"/>
+    <rect x="1066" y="56" width="84" height="84" fill="#28291f" stroke="#efc484"/>
+    <rect x="924" y="188" width="84" height="84" fill="#060d09"/>
+    <rect x="916" y="180" width="84" height="84" fill="#1c2931" stroke="#9db6cd"/>
+  </g>
+  <g fill="none" stroke-width="3">
+    <path d="M846 80H882M846 98H872M846 116H882" stroke="#7fdcc0"/>
+    <path d="M1094 82L1081 98L1094 114M1122 82L1135 98L1122 114" stroke="#efc484"/>
+    <path d="M940 222H976M958 204V240" stroke="#9db6cd"/>
+  </g>
+</svg>

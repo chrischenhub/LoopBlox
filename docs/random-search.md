@@ -1,8 +1,18 @@
-# Current BFS/DFS experiment guidelines
+# Retired BFS/DFS experiment guidelines
 
-Updated September 14, 2026. **This page describes the fixed-task protocol implemented in the current code. It has not been rerun yet.** The September 13–14 campaign used the old sampling rule. Its results and protocol deviation are documented in the [historical experiment summary](experiments/bfs-dfs-20260914/README.md); they are not results from this protocol.
+Retired September 21, 2026. New work follows [experiment.md](../experiment.md):
+continuous Loop improvement on one frozen benchmark. The commands and budgets
+below preserve the superseded BFS/DFS design. They are not a supported path for
+new research, and the unrun fixed-task revision is not a pending experiment.
+Their source is preserved in the [workflow archive](../archive/experiment-workflows-20260921/README.md);
+these commands have been removed from the active package.
+References to "current" below describe the protocol at the time this guide was written.
+
+Updated September 20, 2026. **This page describes the fixed-task protocol implemented in the current code. It has not been rerun yet.** The September 13–14 campaign used the old sampling rule and an earlier component library. Its results and protocol deviation are documented in the [historical experiment summary](experiments/bfs-dfs-20260914/README.md); they are not results from this protocol.
 
 This is a development-only pilot. Training means searching Python Loop compositions; model weights do not change. This page owns the current settings and operator workflow. [AGENTS.md](../AGENTS.md) owns engineering and evidence rules across experiments, and [CONTROLLER.md](../CONTROLLER.md) describes the researcher API. Run all commands from the repository root, using a new output directory each time.
+
+The proposed [domain improvement protocol](continual-improvement.md) places search inside a lifecycle of initial training, new-task measurement, permitted feedback, cross-round updates, and final holdout. This page remains the guide to the current fixed-task BFS/DFS implementation. Its commands do not schedule new-task batches, expand the development set, or implement the proposed lifecycle. Its five-task settings are not defaults for that study.
 
 ## Agreed settings
 
@@ -15,7 +25,7 @@ This is a development-only pilot. Training means searching Python Loop compositi
 | Comparison after a change | Rerun the parent on five tasks and run the child on those same five tasks: 10 complete task runs. Previous parent scores do not replace its runs in the new comparison. |
 | Repetition and pairing | One run per candidate per task, `repeats=1`. Task IDs and order stay fixed across evaluations. Each run gets a fresh environment and worker; candidate order rotates by task position. |
 | Completion and selection | Judge performance after the complete batch. DFS exploration order is separate from final selection. The baseline comparison before submission uses the same five tasks. |
-| Per-task limits | 300 seconds, 40 agent actions, 64 model calls, and 65,536 output tokens. Simulated-user model calls count toward the budget. Models and total research budgets are frozen in the new campaign's `protocol.json`. |
+| Per-task limits | 900 charged seconds, 40 agent actions, 64 model calls, and 65,536 output tokens, from `DEFAULT_TASK_LIMITS` in `loopblox/benchmarks/tau2.py`. Simulated-user model calls count toward the budget. Models and total research budgets are frozen in the new campaign's `protocol.json`. Historical campaigns retain their original limits. |
 
 A task run is one Loop's complete attempt at one task, potentially containing many model and tool calls. Five parent runs plus five child runs cover five distinct tasks. Historical scores and traces remain available for diagnosis and explanation. Reruns provide evidence about same-task variability, but one paired evaluation cannot eliminate variability or establish causality.
 
@@ -36,13 +46,13 @@ Follow the [τ² setup guide](running.md) to pin upstream source, install its se
 
 The general `python -m loopblox.benchmarks.run_tau2 prepare` command creates both development and holdout splits. The random-search entry point requires a manifest containing only development tasks, so it cannot directly consume that general suite. There is no CLI for choosing a custom development subset. Prepare and freeze a development-only suite on the host, recording its source, grouping, selection rule, and file hashes. Do not relabel holdout tasks as development.
 
-In the commands below, `.artifacts/tau2/development-001` refers to that prepared suite; a fresh clone does not include it. The preserved BFS/DFS campaigns contain complete frozen suites that can be used locally for later development experiments. A formal study still needs its own frozen data protocol.
+In the commands below, `.artifacts/tau2/development-001` refers to that prepared suite; a fresh clone does not include it. All future development tasks must belong to official train. Historical BFS/DFS suites contain official test questions and are rejected by the current loader; their frozen implementations remain available for historical inspection. Prepare a new official-train suite before further search. A formal study still needs its own frozen data protocol.
 
 BFS and DFS use these five development tasks: the first five IDs in ascending order from the original ten-task pool, chosen without reference to scores:
 
 `retail-development-0000`, `retail-development-0002`, `retail-development-0004`, `retail-development-0006`, `retail-development-0007`.
 
-[`TASK_IDS`](../loopblox/experiments/search.py) is the sole source of this list. Preparation copies it into `protocol.json`; batch size derives from its length, and `--batch` is no longer available. The suite must contain these development tasks; missing IDs cause an error. BFS, Top 3 local research, every DFS branch, all comparisons, and the baseline comparison before submission use the full list once per candidate, without task sampling. The separate opening check uses only the first task and does not eliminate candidates.
+[`TASK_IDS`](../archive/experiment-workflows-20260921/loopblox/experiments/search.py) is the sole source of this list. Preparation copies it into `protocol.json`; batch size derives from its length, and `--batch` is no longer available. The suite must contain these development tasks; missing IDs cause an error. BFS, Top 3 local research, every DFS branch, all comparisons, and the baseline comparison before submission use the full list once per candidate, without task sampling. The separate opening check uses only the first task and does not eliminate candidates.
 
 ## 2. Freeze 10 random starts and select the Top 3
 
@@ -57,6 +67,15 @@ PYTHONPATH=.artifacts/tau2/random-001/implementation \
 ```
 
 `prepare` checks model configuration, Docker, and frozen dependencies, then saves candidates and implementation snapshots without model requests. `run` starts model calls. `PYTHONPATH` points to the frozen implementation; `-P` prevents source in the current working directory from taking precedence. Commands still run from the repository root to read the local `.env`. The generator samples exposed context, decision, observation, planning, review, and reflection choices to produce distinct Python sources without reading task answers.
+
+New preparations use the current [component contracts](../COMPONENTS.md): `decide`
+owns joint reasoning and action selection; Plan steps can scope decisions; Choose
+compares existing proposals; Critique returns evidence-linked assessments. Recent
+context is measured in observed executions, and brief observations support paging
+and later full reads. The episode's frozen catalog owns the actual exposed subset.
+The sampler is a source of starting Loops, not the full space of allowed Python
+compositions. Historical candidates and their frozen implementations keep their
+original component names and behavior; do not migrate a preserved campaign in place.
 
 Screening reserves 56 runs: one opening baseline run plus 11 controllers × five fixed tasks. Every controller uses identical task IDs and task order. Fully scored candidates rank by passes, then model calls, input/output tokens, and generation order. The baseline is a separate reference. Missing scores remain recorded and exclude a candidate from ranking.
 
@@ -80,7 +99,7 @@ Each branch starts from its submitted source and its own public research experie
 
 The per-branch task cap is `2 + 2 × batch × nodes + 2 × batch`, or 72 with the current settings, including opening runs and the baseline comparison before submission. Early submission or insufficient remaining budget reduces actual node coverage and must be reported. Branches share task IDs but execute separately; their results do not constitute one unified paired ranking.
 
-## 4. Inspect results and explicitly recover
+## 4. Inspect results and recover
 
 ```sh
 # Generate a report from existing records without model requests
@@ -91,7 +110,7 @@ python3 -P -B -m loopblox.experiments.search report \
 
 Start with `report.md`, `analysis.json`, each branch's `selected-controller.py`, and `public/evaluations/`. Raw records contain substantial task data and model content and live in Git-ignored `.artifacts/` by default.
 
-After an error, establish its type and close the old process. Once recovery is explicitly authorized, use the original campaign's frozen entry point to create a new directory, then run its implementation:
+The [recovery policy in AGENTS.md](../AGENTS.md) owns authorization. After an actual run fault in an already authorized experiment, close the old process, diagnose and repair the fault, perform focused checks, and recover in a new frozen campaign without requesting permission again for each attempt. For recovery without an implementation change, use the original campaign's frozen entry point to create a new directory, then run its implementation:
 
 ```sh
 PYTHONPATH=.artifacts/tau2/dfs-001/implementation \
@@ -103,8 +122,8 @@ PYTHONPATH=.artifacts/tau2/dfs-recovery-001/implementation \
   .artifacts/tau2/dfs-recovery-001
 ```
 
-Recovery preserves submitted branches and starts fresh researchers for unfinished ones, subtracting prior task, model, output, and time spend. It does not resume Python call stacks or replay tools. Any implementation change must be recorded in a new campaign without rewriting historical sources.
+Recovery preserves submitted branches and starts fresh researchers for unfinished ones, subtracting prior task, model, charged-output, and charged-time spend. It does not resume Python call stacks or replay tools. Any implementation change must be recorded in a new campaign without rewriting historical sources.
 
-Scheduled recovery requires operator authorization and an external scheduler; the CLI does not create timers. An authorized policy may wait at least 14 minutes after an actual `service_not_ready` failure. HTTP 429 / `rate_limit` and other failures do not meet that condition, and normal execution must not be periodically restarted. Use an operator-managed persistent terminal or process service for long experiments; closing a temporary command session may terminate the scheduler.
+Creating a background recovery schedule still requires separate opt-in under the AGENTS.md policy; active recovery does not create timers. An authorized external scheduler may wait at least 14 minutes after an actual `service_not_ready` failure. HTTP 429 / `rate_limit` and other failures do not meet that timer condition, and normal execution must not be periodically restarted. Use an operator-managed persistent terminal or process service for long experiments; closing a temporary command session may terminate the scheduler.
 
 The preserved September 13–14 campaigns use the earlier flat source layout and must recover through their original `implementation/run_random_search.py`. Those frozen implementations retain the confirmed sampling-with-replacement error; resuming them does not satisfy the no-replacement requirement. The fixed-task rule applies only to new experiments. Do not combine old and new results as one experiment without a protocol deviation, or replace an old campaign's implementation or protocol.

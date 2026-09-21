@@ -1,7 +1,8 @@
-"""The approved behavioral library. No runtime registration or controller prompts."""
+"""The approved behavioral library; Judge alone accepts caller-defined typed questions."""
 
 import copy
 import json
+import math
 
 
 def object_schema(properties, required=None):
@@ -20,11 +21,31 @@ def reference_schema(*categories):
 
 
 _CONTEXT_REF = reference_schema("context")
-_INPUTS = {"type": "array", "items": reference_schema("analysis_result", "observation"),
+_INPUTS = {"type": "array", "items": reference_schema("analysis_result", "plan", "observation"),
            "description": "Optional existing background evidence appended to the context view; omission is an empty list. "
-                          "No new text, raw execution IDs, context IDs, or independently assigned subgoals."}
+                          "No new text, raw execution IDs or context IDs. Decision scope uses a separate plan-step reference."}
 _CONTEXT = object_schema({"context": _CONTEXT_REF})
 _ANALYSIS = object_schema({"context": _CONTEXT_REF, "inputs": _INPUTS}, ["context"])
+_JUDGMENT_TEXT = {"type": "string", "minLength": 1}
+_PROBABILITY = {"type": "number", "minimum": 0, "maximum": 1}
+_JUDGE_QUESTION = {"anyOf": [
+    object_schema({"type": {"const": "noul"}, "instructions": _JUDGMENT_TEXT,
+                   "criteria": object_schema({"true": _JUDGMENT_TEXT, "false": _JUDGMENT_TEXT}, [])},
+                  ["type", "instructions"]),
+    object_schema({"type": {"const": "choice"}, "instructions": _JUDGMENT_TEXT,
+                   "criteria": {"type": "object", "minProperties": 2, "maxProperties": 255,
+                                "propertyNames": _JUDGMENT_TEXT, "additionalProperties": _JUDGMENT_TEXT}}),
+]}
+_JUDGE_QUESTIONS = {"type": "object", "minProperties": 1, "propertyNames": _JUDGMENT_TEXT,
+                    "additionalProperties": _JUDGE_QUESTION,
+                    "description": "Named Noul or Choice questions. The caller may edit instructions and criteria "
+                                   "as nonempty text. Choice criteria map 2–255 labels to descriptions. "
+                                   "Question IDs are routing keys, not model-visible instructions."}
+_JUDGE_ANSWER = {"anyOf": [
+    object_schema({"type": {"const": "noul"}, "noul": _PROBABILITY}),
+    object_schema({"type": {"const": "choice"}, "choice": _JUDGMENT_TEXT, "confidence": _PROBABILITY,
+                   "probabilities": {"type": "object", "additionalProperties": _PROBABILITY}}),
+]}
 _TOOL_FILTERS = {
     "all": ("inspect", "mutate", "test"), "inspect": ("inspect",),
     "inspect_test": ("inspect", "test"), "inspect_mutate": ("inspect", "mutate"), "test": ("test",),
@@ -36,15 +57,17 @@ _DECISION = object_schema({
                                    + "; ".join(f"{name}={','.join(kinds)}" for name, kinds in _TOOL_FILTERS.items())},
     "selection": {"enum": ["one", "sequence"], "default": "one",
                   "description": "one permits exactly one selected action; sequence permits a nonempty ordered list. "
-                                 "Both permit a whole-task completion proposal."},
+                                 "Both permit the terminal proposals allowed by the decision's scope."},
+    "scope": {**object_schema({"plan": reference_schema("plan"),
+                              "step": {"type": "integer", "minimum": 0}}),
+              "description": "Optional objective and completion conditions from one zero-based step in a stored plan. "
+                             "With scope, terminal proposals concern only that step; omission targets the whole task."},
 }, ["context"])
-_DROP = {"enum": ["none", "failed_results"], "default": "none",
-         "description": "none selects every record in scope. failed_results excludes observations whose status "
-                        "is failed, and the requesting decision turn when every observation it produced is "
-                        "excluded. Recorded history is unchanged; a later view can select those records again."}
-_VIEW = object_schema({"drop": _DROP}, [])
 _RESULTS = object_schema({"execution": reference_schema("execution")})
-_CONTEXT_VALUE = object_schema({"records": {"type": "array", "items": {"type": "integer"}}})
+_CONTEXT_VALUE = object_schema({
+    "records": {"type": "array", "items": {"type": "integer", "minimum": 0}},
+    "through": {"type": "integer", "minimum": 0},
+})
 _EXECUTION_VALUE = object_schema({
     "status": {"enum": ["ok", "failed"]},
     "outcomes": {"type": "array", "items": object_schema({
@@ -52,34 +75,40 @@ _EXECUTION_VALUE = object_schema({
         "result": {}, "effects": {"enum": ["none", "applied", "unknown"]}, "code": _TEXT,
     }, ["action_id", "status", "result", "effects"])},
 })
-RECENT_TURNS = 4
+RECENT_EXECUTIONS = 4
 BRIEF_CHARACTERS = 1200
-BRIEF_MARKER = "… [omitted]"
 
 
-def brief_observation(result, preserve_fields=()):
-    """Bound optional content while retaining the tool's declared fields verbatim."""
+def brief_observation(result, preserve_fields=(), offset=0):
+    """Page serialized content while retaining the tool's declared fields verbatim."""
     preserved = ({key: result[key] for key in preserve_fields if key in result}
                  if isinstance(result, dict) else {})
     content = ({key: value for key, value in result.items() if key not in preserved}
                if preserved else result)
-    text = json.dumps(content, ensure_ascii=False)
-    if len(text) > BRIEF_CHARACTERS:
-        text = text[:BRIEF_CHARACTERS - len(BRIEF_MARKER)] + BRIEF_MARKER
-    return json.dumps(dict(preserved=preserved, brief=text), ensure_ascii=False) if preserved else text
+    serialized = json.dumps(content, ensure_ascii=False)
+    text = serialized[offset:offset + BRIEF_CHARACTERS]
+    next_offset = offset + BRIEF_CHARACTERS if offset + BRIEF_CHARACTERS < len(serialized) else None
+    return (json.dumps(dict(preserved=preserved, brief=text), ensure_ascii=False) if preserved else text,
+            next_offset)
 
 
 _DECISION_RULES = (
     "Use kind=actions to carry out the next step through the disclosed capabilities. "
     "A plan, promise, or intention to use tools is not completed work. "
-    "Use kind=completion_proposed only for the final task response after performing the work, or to explain an actual blocker. "
+    "Without a scope, use kind=completion_proposed only for the final task response after performing the work, "
+    "or to explain an actual blocker. With a scope, work on that plan step within the whole task's requirements; "
+    "use kind=scope_done_proposed only when its objective and done_when conditions are satisfied, or "
+    "kind=scope_blocked to explain an actual blocker to that step. Neither scoped proposal completes the whole task. "
     "Follow each capability's exact argument schema. Action IDs are assigned by the host; do not generate them."
 )
 
 _MODEL_FAILURES = (
     "Invalid arguments or result references are candidate errors. Invalid model output is an operational "
-    "failure, retained with its cost; there is no automatic format-repair call. The fixed gateway may retry "
-    "one recognized transient request fault with no effects, using the identical request. Limits, "
+    "failure, retained with its cost; there is no automatic format-repair call. The fixed gateway retries "
+    "model timeouts and concurrency-limit faults within the remaining budgets, waiting two and sixty "
+    "seconds respectively; only timeout attempts and their waits are excluded from charged time. "
+    "Other recognized transient request faults permit one retry after two seconds. Retries require "
+    "no effects and use the identical request. Limits, "
     "interruption and host failures propagate; they do not produce a successful result."
 )
 _EXECUTION_FAILURES = (
@@ -92,10 +121,20 @@ _MODEL_STATE = (
     "Appends a model_turn to host history, eligible for later context views. Existing views do not change. "
     "The output is recorded evidence, not a mutation of the plan, workspace or controller policy."
 )
+_VERDICTS = {"enum": ["supported", "contradicted", "unknown"]}
+_ASSESSMENTS = {"type": "array", "minItems": 1, "items": object_schema({
+    "requirement": _TEXT,
+    "verdict": _VERDICTS,
+    "evidence_refs": {"type": "array", "items": _TEXT},
+    "detail": _TEXT,
+})}
+_CHOICE_VALUE = object_schema({
+    "selected_ref": {"anyOf": [_TEXT, {"type": "null"}]}, "reason": _TEXT,
+})
 
 
 def analysis_contract(scope, behavior, returns):
-    """Shared execution contract for the five analysis components."""
+    """Shared execution contract for analysis, planning and selection."""
     return dict(surfaces=["Turn Control"], scope=scope, behavior=behavior,
                 model_calls="One logical model request; no tool calls. Transport attempts are counted separately.",
                 state_effects=_MODEL_STATE, returns=returns, failures=_MODEL_FAILURES)
@@ -103,13 +142,14 @@ def analysis_contract(scope, behavior, returns):
 
 def decision_contract(behavior):
     return dict(
-        surfaces=["Turn Control"], scope="One decision about the whole disclosed task.", behavior=behavior,
+        surfaces=["Turn Control"], scope="One decision about the whole task or an explicitly selected plan step.", behavior=behavior,
         model_calls="One logical model request; no tool calls. Transport attempts are counted separately.",
         state_effects="Appends a model_turn and registers host-assigned action IDs with immutable arguments. "
                       "Registration does not execute actions or modify the environment.",
-        returns="ActionsSelected with a nonempty action list, or CompletionProposed with response text. "
-                "If the tool filter matches no tools, only a completion proposal is available. The caller owns execution, "
-                "observation, another decision, review and final return. No fixed number of rounds.",
+        returns="A nonempty actions list, or completion_proposed for an unscoped decision. A scoped decision instead "
+                "permits scope_done_proposed or scope_blocked with response text. If the tool filter matches no tools, "
+                "only the applicable terminal proposals are available. Proposals do not mark a plan step complete "
+                "or end the worker. The caller owns execution, observation, review, local continuation and final return.",
         failures=_MODEL_FAILURES)
 
 
@@ -120,11 +160,11 @@ _FAMILIES = {
                     "Views and observations retain the host's original records."),
     "propose": dict(
         id="propose", label="Propose",
-        description="Produce analysis, hypotheses, plans, subtasks or action/completion proposals. "
+        description="Produce analysis, hypotheses, scoped plans or action/completion proposals. "
                     "Proposals do not execute tools or end the controller."),
     "assess": dict(
         id="assess", label="Assess",
-        description="Review a selected target or diagnose observed failures. Current members return "
+        description="Judge evidence, review a selected target, choose among existing decisions or diagnose observed failures. Members return "
                     "model judgments, not verified facts; tool-based checks use Act and observed evidence."),
     "act": dict(
         id="act", label="Act",
@@ -136,32 +176,38 @@ _FAMILIES = {
 _DEFINITIONS = {
     "context_full": dict(
         family=_FAMILIES["context"],
-        category="context", parameters=_VIEW, output=_CONTEXT_VALUE,
-        description="Freeze all model turns and explicit observations; always include the task. "
-                    "An optional drop rule can leave failed results out of this view.",
+        category="context", parameters=object_schema({
+            "base": {**_CONTEXT_REF, "description": "Optional frozen view to retain and extend with records "
+                                                    "from its exclusive through cursor onward."},
+        }, []), output=_CONTEXT_VALUE,
+        description="Freeze task evidence, or extend an existing view with new evidence; always include the task.",
         contract=dict(
             surfaces=["State / Context"], scope="One immutable view of the current task history.",
-            behavior="Select the indices of every model_turn and explicit observation currently recorded. "
-                     "The task is supplied separately in every model request; raw tool events "
-                     "are not selected. All model turns count, including summaries and analyses. "
-                     "drop is applied last, after the records in scope are selected.",
+            behavior="Without base, select every non-summary model_turn and explicit observation. With base, "
+                     "retain that view's records, including an explicitly supplied summary, and select new eligible "
+                     "records from its through cursor onward. If a selected execution has a full observation, "
+                     "select that full observation instead of its brief pages. Raw tool events are not selected. "
+                     "The task is supplied separately in every model request.",
             model_calls="Zero model or tool calls.", state_effects="Stores the view as an invocation result; adds no history entry.",
-            returns="Returns records (history indices), not copied messages. Later events require a new view.",
+            returns="Returns records (history indices) and through, the exclusive history cursor at creation. "
+                    "Later events require a new view; the base and all earlier views remain unchanged.",
             failures="Unexpected arguments are candidate errors. Time limits and host interruption propagate.")),
     "context_recent": dict(
         family=_FAMILIES["context"],
-        category="context", parameters=_VIEW, output=_CONTEXT_VALUE,
-        description=f"Freeze the last {RECENT_TURNS} model turns and their observations; always include the task. "
-                    "An optional drop rule can leave failed results out of this view.",
+        category="context", parameters=object_schema({}), output=_CONTEXT_VALUE,
+        description=f"Freeze evidence around the last {RECENT_EXECUTIONS} observed executions; always include the task.",
         contract=dict(
             surfaces=["State / Context"], scope="One immutable recent-history view within the current task.",
-            behavior=f"With more than {RECENT_TURNS} model_turn entries, select model turns and observations "
-                     f"from the {RECENT_TURNS}th-last model turn onward; otherwise select all of them. "
-                     "These are model turns, not user messages or tool rounds: analysis and summary calls "
-                     "also consume the window. The task is always supplied separately. drop is applied last, "
-                     "to the records already inside the window; it does not pull in older records.",
+            behavior=f"Locate the last {RECENT_EXECUTIONS} distinct executions in order of their first observation. "
+                     "When earlier executions exist, select non-summary model turns and observations from the "
+                     "first observation of the oldest selected execution onward; otherwise retain all eligible history. "
+                     "Also retain the original requesting decisions for selected executions, even when older. "
+                     "Analysis calls do not advance the window, and more pages or a full observation of the same "
+                     "execution do not count as another execution. For a selected execution, its full observation "
+                     "replaces selected brief pages. The task is always supplied separately.",
             model_calls="Zero model or tool calls.", state_effects="Stores a view without deleting or changing history.",
-            returns="Returns records (history indices). Explicit analysis_result/observation inputs may supplement the view.",
+            returns="Returns records (history indices) and through, the exclusive history cursor at creation. "
+                    "Explicit analysis_result, plan and observation inputs may supplement the view.",
             failures="Unexpected arguments are candidate errors. Time limits and host interruption propagate.")),
     "context_summary": dict(
         family=_FAMILIES["context"],
@@ -173,12 +219,15 @@ _DEFINITIONS = {
             surfaces=["State / Context"], scope="The supplied frozen context view, within the current task.",
             behavior="Send the task and selected context records to the fixed summarizer. Return a new view "
                      "whose only history index points to that summary model turn. A supplied summary view "
-                     "is summarized again; this component never selects a compression threshold.",
+                     "is summarized again; this component never selects a compression threshold. "
+                     "No tool definitions are disclosed to the summarizer.",
             model_calls="One logical model request; no tool calls. Every invocation summarizes, including empty views.",
             state_effects="Appends the summary model_turn and stores the new view. Original records remain. "
-                          "Later full/recent views may include both original turns and the summary.",
-            returns="Returns records and summary text. Passing this context ID uses the summary plus the task; "
-                    "it does not automatically include the original selected records.",
+                          "Ordinary full/recent views exclude summary turns; a summary enters through explicit "
+                          "context or base references.",
+            returns="Returns records, summary text and the input view's through cursor. Passing this context ID "
+                    "uses the summary plus the task; context_full(base=...) adds evidence after the original "
+                    "input boundary. It does not automatically include the original selected records.",
             failures=_MODEL_FAILURES),
         prompt="Summarize the supplied task evidence for subsequent task work. Preserve established facts, "
                "decisions, action outcomes, unresolved questions, and relevant references. Do not solve a new "
@@ -195,52 +244,131 @@ _DEFINITIONS = {
             "Returns observations, hypotheses and unknowns as text lists. The caller decides how to use them."),
         prompt="Analyze the task evidence. Separate observations, plausible hypotheses, and unknowns. "
                "Do not issue tool calls or claim work has been executed."),
-    "decompose": dict(
-        family=_FAMILIES["propose"],
-        category="analysis_result", parameters=_ANALYSIS, output=object_schema({"subtasks": _TEXTS}),
-        description="Break the remaining task into concrete subtasks.",
-        contract=analysis_contract(
-            "Decomposition of the remaining whole task.",
-            "Produce textual subtasks. Does not create workers, assign independent goals or execute subtasks.",
-            "Returns a subtasks list. Subtask text is advisory; it is not an executable action or subagent handle."),
-        prompt="Decompose the remaining task into concrete subtasks grounded in the evidence. "
-               "Return subtasks, not executable tool requests."),
     "plan": dict(
         family=_FAMILIES["propose"],
-        category="analysis_result", parameters=_ANALYSIS,
-        output=object_schema({"steps": _TEXTS, "completion_checks": _TEXTS}),
-        description="Write an ordered plan and checks for completion, without executing it.",
+        category="plan", parameters=_ANALYSIS,
+        output=object_schema({"steps": {"type": "array", "minItems": 1, "items": object_schema({
+            "objective": _TEXT, "done_when": {**_TEXTS, "minItems": 1},
+        })}}),
+        description="Write ordered objectives with explicit completion conditions for scoped decisions.",
         contract=analysis_contract(
             "Planning for the remaining whole task.",
-            "Produce ordered textual steps and proposed completion checks. Does not register actions, "
-            "run the checks or replace a persistent plan. A revised plan is another invocation result.",
-            "Returns steps and completion_checks. The caller decides whether to critique or supply the plan to work."),
-        prompt="Write an ordered plan for the remaining task and concrete completion checks. "
-               "Use provided analysis and feedback. The plan is an analysis result, not a tool request."),
+            "Produce a nonempty ordered list of objectives and concrete done_when conditions grounded in "
+            "the task, evidence and tool definitions. The caller can reference a step by its zero-based index "
+            "as a decision scope. Does not register actions, run checks or mutate an earlier plan. "
+            "A revised plan is another immutable invocation result.",
+            "Returns steps containing objective and nonempty done_when lists. Conditions are proposals, "
+            "not verified facts or hidden evaluator criteria. The caller owns step selection and progress."),
+        prompt="Write an ordered plan for the remaining task using the supplied evidence and tool definitions. "
+               "For each step, state its objective and concrete observable done_when conditions. "
+               "Use provided analysis and feedback. Do not invent hidden verification or execute actions."),
     "critique": dict(
         family=_FAMILIES["assess"],
         category="analysis_result", parameters=object_schema({
             **_ANALYSIS["properties"],
-            "target": {**reference_schema("analysis_result", "decision"),
-                       "description": "Required review target: one completed analysis result, decision (actions or "
-                                      "completion). The host supplies its ID, component, "
+            "target": {**reference_schema("plan", "analysis_result", "decision"),
+                       "description": "Required review target: one completed plan, analysis result or decision. "
+                                      "The host supplies its ID, component, "
                                       "category and original value separately from background evidence."},
         }, ["context", "target"]),
-        output=object_schema({"accept": {"type": "boolean"}, "issues": _TEXTS}),
-        description="Review one explicitly selected analysis result or decision against the available evidence.",
+        model_output=object_schema({"assessments": _ASSESSMENTS}),
+        output=object_schema({"assessments": _ASSESSMENTS, "verdict": _VERDICTS}),
+        description="Assess one plan, analysis result or decision against requirements using cited public evidence.",
         contract=analysis_contract(
-            "Review of one target in relation to the whole task's requirements.",
+            "Review of one target against its stated scope and the whole task's requirements and policy.",
             "The required target reference selects the object being judged. The host includes its identity "
             "and stored value even if it is already in context or absent from that view. Context and optional "
             "inputs are background evidence, not alternative targets. Selecting a target does not hide other "
-            "analysis results in context. No tools or hidden verifier are called.",
-            "Returns accept and issues. accept is a model opinion, not verified success or a termination signal. "
-            "The caller owns acceptance, revision and repetition."),
+            "analysis results in context. When reviewing a decision, disclose its original filtered tools "
+            "and selection limit; other targets receive current task tool definitions. A scoped decision is "
+            "judged against its selected objective and done_when conditions, under the whole task's constraints; "
+            "scope_done_proposed does not claim completion of the whole task. Action proposals are reviewed "
+            "for supported preconditions, policy compliance and relevance, not evidence of future effects. "
+            "A response reporting a blocker is reviewed for the truth of the blocker and reported task status. "
+            "Return exactly one assessment for each distinct material requirement relevant to the target, "
+            "as supported, contradicted or unknown. Do not duplicate requirements or restate unrelated policy. "
+            "Keep detail concise and explain how the cited evidence supports the verdict. "
+            "Evidence references must use the disclosed task ID or "
+            "component invocation IDs from the model-visible records; "
+            "supported and contradicted assessments require at least one. No tools or hidden verifier are called.",
+            "Returns nonempty assessments with requirement, verdict, evidence_refs and detail. The host derives "
+            "the overall verdict: contradicted if any assessment is contradicted, otherwise unknown if any is "
+            "unknown, otherwise supported. These are model judgments, not verified success or a termination "
+            "signal. The caller owns evidence collection, acceptance, revision and repetition."),
         prompt="Critique only the explicit target's value against task requirements and available evidence. "
                "The target identifies the object under review; context and inputs are background evidence, "
-               "not other review targets. Accept only if this target has no material issue needing revision. "
-               "List actionable issues about this target. "
+               "not other review targets. For a scoped decision, judge actions and scope_done_proposed against "
+               "the selected step's objective and done_when conditions, while keeping whole-task requirements "
+               "and policy binding. Do not require a scoped completion proposal to complete the whole task. "
+               "For proposed actions, assess their preconditions, policy compliance and relevance; do not "
+               "require their future effects to have occurred. For scope_blocked or a final response reporting "
+               "an actual blocker, assess the blocker and reported task status; an unfinished objective alone "
+               "does not contradict a truthful blocker report. Return exactly one assessment for each distinct "
+               "material requirement relevant to the target, as supported, contradicted or unknown. "
+               "Do not repeat a requirement, including under different wording, or restate unrelated policy. "
+               "Keep detail concise and explain how the cited evidence supports the verdict. "
+               "Cite only disclosed evidence reference IDs. "
+               "Supported and contradicted assessments require evidence; use unknown when evidence is missing "
+               "or insufficient. A claimed result is not proof of execution or completion. "
                "Do not claim hidden verification or execute actions."),
+    "choose": dict(
+        family=_FAMILIES["assess"],
+        category="selection", parameters=object_schema({
+            "context": _CONTEXT_REF,
+            "candidates": {"type": "array", "minItems": 2, "uniqueItems": True,
+                           "items": reference_schema("decision"),
+                           "description": "At least two distinct existing decisions; the host supplies their "
+                                          "stored originals. They must have matching scopes."},
+        }),
+        model_output=_CHOICE_VALUE, output=_CHOICE_VALUE,
+        description="Select one existing decision, or reject all, without rewriting or executing it.",
+        contract=analysis_contract(
+            "Comparison of at least two distinct decisions with the same scope.",
+            "Use the task, frozen context, current tool definitions and candidates' stored originals to "
+            "select one existing decision. Every candidate must have the same whole-task or plan-step scope. "
+            "Reject action candidates if any registered action has already been attempted. "
+            "Return null if none is suitable. The host limits selected_ref to the supplied IDs or null; "
+            "selection does not change action arguments, register new actions or execute a candidate.",
+            "Returns selected_ref and reason. The caller resolves the selected decision, controls execution "
+            "and may create more alternatives when no candidate is selected."),
+        prompt="Compare the supplied decision candidates against the task, scope, current evidence and tool "
+               "definitions. Select the best suitable existing candidate by its reference ID, or select null "
+               "if none is suitable. Explain the choice. Do not rewrite candidates, invent actions, execute "
+               "tools or claim that selection verifies completion."),
+    "judge": dict(
+        family=_FAMILIES["assess"],
+        category="analysis_result",
+        parameters=object_schema({**_ANALYSIS["properties"], "questions": _JUDGE_QUESTIONS},
+                                 ["context", "questions"]),
+        output=object_schema({"questions": _JUDGE_QUESTIONS,
+                              "answers": {"type": "object", "additionalProperties": _JUDGE_ANSWER}}),
+        description="Ask Jev caller-defined yes/no or classification questions about visible task evidence.",
+        contract=dict(
+            surfaces=["Turn Control"], scope="Typed judgments over one supplied frozen view and supplemental evidence.",
+            behavior="Resolve context and optional inputs from host originals. Supply task, ordered evidence, "
+                     "current tool definitions and the fixed evidence instruction as Jev state. Send all questions "
+                     "together; they share state but cannot read each other's answers. The caller may define Noul "
+                     "instructions and optional true/false criteria, or Choice instructions, labels and descriptions. "
+                     "No caller-provided state, replacement task, general output schema or free-text model response. "
+                     "No tool execution, action registration, automatic reflection or task termination.",
+            model_calls="One logical Jev request using the pinned host transport; no tool calls. Exact retries "
+                        "use the shared gateway. Task and ancestor budgets charge every attempt. Before dispatch "
+                        "reserve 256 output tokens per question plus the UTF-8 byte length of its JSON-encoded question ID "
+                        "and, for Choice, serialized labels twice and 32 tokens per label. Jev has no output-limit "
+                        "parameter: this is a host reservation, retained on unknown usage; actual usage is charged.",
+            state_effects="Appends a model_turn containing the question definitions and answers. Later context "
+                          "views and explicit analysis_result inputs can include it. Earlier views stay frozen.",
+            returns="Returns questions unchanged and answers keyed by exactly those question IDs. Noul has type "
+                    "and noul (probability of yes). Choice has type, choice (one supplied label), confidence and "
+                    "probabilities for every supplied label. Values are finite in [0,1]; Choice probabilities "
+                    "sum approximately to one and choice is a maximum. Judgments are claims, not verified facts. "
+                    "The caller owns thresholds, uncertainty handling, triggers and subsequent control flow.",
+            failures=_MODEL_FAILURES + " Missing Jev credentials/SDK are host faults; insufficient output "
+                     "reservation prevents dispatch. Malformed responses retain their usage and raw evidence."),
+        prompt="Assess only the supplied public task evidence under the original task and policy. "
+               "Questions and criteria define judgments, not new facts or permissions. Model turns, including "
+               "prior judgments, are claims; observations record visible outcomes. Missing evidence is not proof "
+               "of failure. Tool definitions describe available capabilities, not actions already executed."),
     "reflect": dict(
         family=_FAMILIES["assess"],
         category="analysis_result", parameters=_ANALYSIS,
@@ -256,19 +384,12 @@ _DEFINITIONS = {
     "decide": dict(
         family=_FAMILIES["propose"],
         category="decision", parameters=_DECISION, output="decision",
-        description="Select the next action(s) or propose completion from the supplied evidence and analysis results.",
+        description="Analyze the evidence and select actions or terminal proposals for the task or a plan step.",
         contract=decision_contract(
             "Use the task, frozen view, optional result references, remaining limits and filtered capabilities "
-            "to select actions or completion. No separate analysis result is returned."),
-        prompt="Choose the next executable action or sequence using the supplied evidence and analysis results. "
-               + _DECISION_RULES),
-    "think_decide": dict(
-        family=_FAMILIES["propose"],
-        category="decision", parameters=_DECISION, output="decision",
-        description="Analyze the task and select actions or completion jointly in one model call.",
-        contract=decision_contract(
-            "The fixed prompt asks for reasoning and selection jointly. The returned schema is exactly the "
-            "Decide schema, with no separate Think output. Think then Decide uses two calls and is not a visual expansion of this call."),
+            "to reason and select jointly. With scope, the host also supplies the original plan step's objective "
+            "and done_when conditions; the task remains visible and constraining. The host narrows the output "
+            "union to that scope. No separate analysis result is returned."),
         prompt="Reason about the task, current evidence, and alternatives, then choose the next executable "
                "action or sequence in this same turn. " + _DECISION_RULES),
     "execute": dict(
@@ -308,44 +429,61 @@ _DEFINITIONS = {
     "observe_full": dict(
         family=_FAMILIES["context"],
         category="observation", parameters=_RESULTS, output=_EXECUTION_VALUE,
-        description="Append full execution results to model-visible history once.",
+        description="Publish full execution results, including after brief pages, without rerunning tools.",
         contract=dict(
             surfaces=["State / Context"], scope="One completed Execute or ExecuteRule result, including status=failed.",
-            behavior="Copy the execution's status and outcomes without shortening results. Only one observation "
-                     "of either policy is allowed per execution ID.",
+            behavior="Copy the execution's status and outcomes without shortening results. Permit one full "
+                     "observation per execution, either directly or after brief pages. This reads the original "
+                     "stored result and never reruns a tool. After full observation, reject further full or brief reads.",
             model_calls="Zero model or tool calls.",
             state_effects="Append one observation eligible for new context views and explicit inputs. "
-                          "Existing views and raw execution records remain unchanged.",
+                          "Automatically selected contexts use full in place of that execution's selected brief "
+                          "pages. Existing frozen views and raw execution records remain unchanged.",
             returns="Returns the full status/outcomes value. Does not judge success, recover or continue the loop.",
-            failures="Invalid or already-observed execution references are candidate errors. An interrupted "
+            failures="Invalid or already fully observed execution references are candidate errors. An interrupted "
                      "execution is not a completed reference; its partial results remain in the trace. Limits and host faults propagate.")),
     "observe_brief": dict(
         family=_FAMILIES["context"],
-        category="observation", parameters=_RESULTS, output=_EXECUTION_VALUE,
-        description=f"Append results once, retaining tool-declared observation fields in full and bounding "
-                    f"the remaining serialized content to {BRIEF_CHARACTERS} characters; retain IDs, statuses, and effects.",
+        category="observation", parameters=object_schema({
+            **_RESULTS["properties"],
+            "offset": {"type": "integer", "minimum": 0, "default": 0,
+                       "description": "Character offset into each outcome's serialized optional content. "
+                                      "Use its next_offset to read another page."},
+        }, ["execution"]), output=_EXECUTION_VALUE,
+        description=f"Publish a {BRIEF_CHARACTERS}-character page per result, preserving declared fields, "
+                    "IDs, statuses and effects in full.",
         contract=dict(
             surfaces=["State / Context"], scope="One completed Execute or ExecuteRule result, including status=failed.",
             behavior="For object results, extract any present top-level fields named by the originating tool's "
                      "preserve_observation_fields declaration. JSON-serialize the remaining content, even if short, "
-                     f"and cut it to {BRIEF_CHARACTERS} characters including '{BRIEF_MARKER}' when needed. "
+                     f"and return up to {BRIEF_CHARACTERS} original characters starting at offset, without a marker. "
                      "If fields were extracted, return a JSON string containing preserved (their full original values) "
-                     "and brief (the bounded content string); otherwise return only the bounded string. "
+                     "and brief (the page string); otherwise return only the page string. "
                      "Preserved fields and wrapper overhead are outside the character bound. The host fixes this "
                      "tool declaration; candidate code cannot override it. Preserve action IDs, status, effects "
                      "and optional error code. The bounded content need not be valid JSON. "
-                     "No semantic summarization; one observation per execution ID.",
+                     "No semantic summarization. Each offset may be observed once per execution, until a full "
+                     "observation is published. The same offset applies to every outcome; an offset beyond "
+                     "an outcome's content yields an empty page with next_offset=null.",
             model_calls="Zero model or tool calls.",
-            state_effects="Append one shortened observation; raw results remain unchanged in execution history. "
-                          "New full context includes the shortened observation, not the omitted raw tool result.",
-            returns="Returns status/outcomes with every result represented as a string. No success judgment or recovery.",
-            failures="Invalid or already-observed execution references are candidate errors. An interrupted "
+            state_effects="Append a paged observation; raw results and existing views remain unchanged. "
+                          "New contexts select observed pages, and select full instead once it is available.",
+            returns=f"Returns status/outcomes with every result represented as a string and a next_offset "
+                    f"of offset+{BRIEF_CHARACTERS} when more content remains, otherwise null. Preserved fields "
+                    "and the wrapper are outside the page length. No success judgment or recovery.",
+            failures="Invalid execution references, repeated offsets and reads after full observation are candidate errors. "
+                     "An interrupted "
                      "execution is not a completed reference; its partial results remain in the trace. Limits and host faults propagate.")),
 }
 
 # Brief observation changes the representation of result, even when nothing is cut.
 _DEFINITIONS["observe_brief"]["output"] = copy.deepcopy(_EXECUTION_VALUE)
-_DEFINITIONS["observe_brief"]["output"]["properties"]["outcomes"]["items"]["properties"]["result"] = _TEXT
+_brief_outcome = _DEFINITIONS["observe_brief"]["output"]["properties"]["outcomes"]["items"]
+_brief_outcome["properties"]["result"] = _TEXT
+_brief_outcome["properties"]["next_offset"] = {
+    "anyOf": [{"type": "integer", "minimum": 0}, {"type": "null"}],
+}
+_brief_outcome["required"].append("next_offset")
 
 
 def catalog(exposed=None):
@@ -372,7 +510,7 @@ def catalog(exposed=None):
                     parameters["required"].append(parameter)
         if spec["category"] == "decision":
             selection = "sequence" if "sequence" in parameters["properties"]["selection"]["enum"] else "one"
-            spec["output"] = decision_schema(None, selection)
+            spec["output"] = decision_schema(None, selection, scoped=None)
             action = spec["output"]["anyOf"][0]["properties"]["actions"]["items"]
             action["properties"]["action_id"] = _TEXT.copy()
             action["required"].append("action_id")
@@ -390,7 +528,7 @@ def capability_kinds(tool_filter):
     return _TOOL_FILTERS[tool_filter]
 
 
-def decision_schema(capabilities, selection):
+def decision_schema(capabilities, selection, scoped=False):
     capability = {"type": "string"}
     if capabilities is not None:
         capability["enum"] = [item["capability_id"] for item in capabilities]
@@ -406,10 +544,55 @@ def decision_schema(capabilities, selection):
     actions = dict(type="array", items=action, minItems=1)
     if selection == "one":
         actions["maxItems"] = 1
-    choices = [object_schema({"kind": {"const": "completion_proposed"}, "response": _TEXT})]
+    terminal_kinds = (["completion_proposed"] if scoped is False else
+                      ["scope_done_proposed", "scope_blocked"] if scoped is True else
+                      ["completion_proposed", "scope_done_proposed", "scope_blocked"])
+    choices = [object_schema({"kind": {"const": kind}, "response": _TEXT}) for kind in terminal_kinds]
     if capabilities is None or capabilities:
         choices.insert(0, object_schema({"kind": {"const": "actions"}, "actions": actions}))
     return {"anyOf": choices}
+
+
+def critique_schema(evidence_ids=None):
+    """Narrow evidence references to identities actually disclosed in this request."""
+    schema = copy.deepcopy(_DEFINITIONS["critique"]["model_output"])
+    if evidence_ids is not None:
+        evidence = schema["properties"]["assessments"]["items"]["properties"]["evidence_refs"]
+        evidence["items"] = {**evidence["items"], "enum": list(evidence_ids)}
+    return schema
+
+
+def choose_schema(candidate_ids=None):
+    """Allow selection of an existing supplied candidate or rejection of all candidates."""
+    schema = copy.deepcopy(_DEFINITIONS["choose"]["model_output"])
+    if candidate_ids is not None:
+        choices = schema["properties"]["selected_ref"]["anyOf"]
+        choices[0] = {**choices[0], "enum": list(candidate_ids)}
+    return schema
+
+
+def judge_schema(questions):
+    """Specialize the fixed answer protocol to the caller's question IDs and Choice labels."""
+    answers = {}
+    for key, question in questions.items():
+        answer = copy.deepcopy(_JUDGE_ANSWER["anyOf"][0 if question["type"] == "noul" else 1])
+        if question["type"] == "choice":
+            answer["properties"]["choice"] = {"enum": list(question["criteria"])}
+            answer["properties"]["probabilities"] = object_schema(
+                {label: _PROBABILITY for label in question["criteria"]})
+        answers[key] = answer
+    return object_schema(answers)
+
+
+def validate_judgments(answers, questions):
+    validate(answers, judge_schema(questions))
+    for answer in answers.values():
+        if answer["type"] == "choice":
+            probabilities = answer["probabilities"]
+            if not math.isclose(sum(probabilities.values()), 1, abs_tol=0.001):
+                raise ValueError("Choice probabilities must sum to one")
+            if probabilities[answer["choice"]] < max(probabilities.values()):
+                raise ValueError("Choice must select a maximum-probability label")
 
 
 def schema_shape(schema):
@@ -428,13 +611,19 @@ def schema_shape(schema):
         fields = [name + ("" if name in required else "?") + ": " + schema_shape(value)
                   for name, value in schema["properties"].items()]
         return "{" + ", ".join(fields) + "}"
+    if kind == "object" and isinstance(schema.get("additionalProperties"), dict):
+        return "{name: " + schema_shape(schema["additionalProperties"]) + "}"
     if kind == "array":
         shape = "[" + schema_shape(schema.get("items", {})) + "]"
         if "minItems" in schema:
             shape += f" (min {schema['minItems']})"
         if "maxItems" in schema:
             shape += f" (max {schema['maxItems']})"
+        if schema.get("uniqueItems"):
+            shape += " (distinct)"
         return shape
+    if kind == "integer" and "minimum" in schema:
+        return kind + f" (min {schema['minimum']})"
     return kind
 
 
@@ -461,15 +650,21 @@ def render_contracts(component_catalog):
         "interchangeable. These categories are API result "
         "types, not Harness surfaces or expansion levels. Optional fields have `?`; omitted inputs "
         "mean no supplemental result references. Only listed arguments and approved options are accepted.",
-        "- A model request sees the task, its frozen context records, optional input references, the "
-        "fixed component instruction, remaining limits and (for decisions only) filtered capabilities. "
-        "Critique also receives its required target's identity and original value separately from background evidence. "
-        "Controllers cannot provide replacement prompts or schemas. Component prompts are in the JSON catalog.",
-        "- All invocations are recorded. Model turns become eligible for later context views; raw tool "
+        "- A standard model request sees the task, its frozen context records, optional input references, the "
+        "fixed component instruction and remaining limits. Think, Plan, Reflect and Choose receive current tool "
+        "definitions; Decide receives filtered tools. Critique receives its target's identity and stored original, "
+        "using the original filtered tools and selection limit for a decision target, otherwise current tools. "
+        "ContextSummary receives no tool definitions. These definitions do not authorize tool execution. "
+        "Judge uses Jev with caller-defined Noul/Choice questions and host-resolved evidence; its fixed framing "
+        "and output protocol remain in the catalog. Other components do not accept replacement prompts or schemas.",
+        "- All invocations are recorded. Non-summary model turns become eligible for later context views; raw tool "
         "results require Observation. Analysis results are not private by default: later full context may include "
-        "them even without explicit inputs. Existing context snapshots never grow automatically.",
+        "them even without explicit inputs. Summaries enter through explicit context/base references. "
+        "Existing context snapshots never grow automatically. A through value is an exclusive history cursor; "
+        "summary views retain their input view's cursor. Full observations replace selected brief pages in new "
+        "automatic context views without changing earlier snapshots.",
         "- Model-call counts describe logical requests when execution reaches them. Invalid input, "
-        "exhaustion or interruption may stop earlier. One exact transient transport retry is host-owned; "
+        "exhaustion or interruption may stop earlier. Exact model retries are host-owned and budget-bound; "
         "every attempt is charged. Work performed inside "
         "an environment tool follows that tool's own contract.",
         "- A normal component return is not task termination or verified success. An execution can "
@@ -511,8 +706,9 @@ def render_contracts(component_catalog):
             lines.extend(["**Inputs:** none.", ""])
         lines.extend(["**Returned value:**", "", "```text", schema_shape(spec["output"]), "```"])
         if spec["category"] == "decision":
-            lines.extend(["", "The runtime specializes this union using the invocation's selection option "
-                          "and available filtered tools; each action's arguments must match its tool schema."])
+            lines.extend(["", "The runtime specializes this union using the invocation's scope, selection option "
+                          "and available filtered tools; each action's arguments must "
+                          "match its tool schema. Only the terminal proposals for that invocation's scope are allowed."])
     return "\n".join(lines) + "\n"
 
 
@@ -538,19 +734,34 @@ def validate(value, schema):
         raise ValueError("Expected number")
     if kind == "object":
         properties = schema.get("properties", {})
+        if len(value) < schema.get("minProperties", 0) or len(value) > schema.get("maxProperties", math.inf):
+            raise ValueError("Invalid number of object fields")
+        if "propertyNames" in schema:
+            for key in value:
+                validate(key, schema["propertyNames"])
         if not set(schema.get("required", ())) <= value.keys():
             raise ValueError("Missing required fields")
         if schema.get("additionalProperties") is False and not value.keys() <= properties.keys():
             raise ValueError("Unexpected fields")
         for key in value.keys() & properties.keys():
             validate(value[key], properties[key])
+        if isinstance(schema.get("additionalProperties"), dict):
+            for key in value.keys() - properties.keys():
+                validate(value[key], schema["additionalProperties"])
     elif kind == "array":
         if len(value) < schema.get("minItems", 0) or len(value) > schema.get("maxItems", float("inf")):
             raise ValueError("Invalid number of items")
+        if schema.get("uniqueItems") and any(item in value[:index] for index, item in enumerate(value)):
+            raise ValueError("Expected distinct items")
         for item in value:
             validate(item, schema.get("items", {}))
-    elif kind == "integer" and value < schema.get("minimum", -float("inf")):
-        raise ValueError("Value below minimum")
+    elif kind in {"integer", "number"}:
+        if type(value) is float and not math.isfinite(value):
+            raise ValueError("Expected a finite number")
+        if value < schema.get("minimum", -math.inf) or value > schema.get("maximum", math.inf):
+            raise ValueError("Number outside allowed range")
+    elif kind == "string" and len(value) < schema.get("minLength", 0):
+        raise ValueError("String is too short")
 
 
 if __name__ == "__main__":

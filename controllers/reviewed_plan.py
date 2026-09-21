@@ -4,7 +4,7 @@ def run(env):
         plan = env.component("plan", context=context["id"])
         while True:
             review = env.component("critique", context=context["id"], target=plan["id"])
-            if review["value"]["accept"]:
+            if review["value"]["verdict"] == "supported":
                 break
             plan = env.component("plan", context=context["id"], inputs=[plan["id"], review["id"]])
         decision = env.component("decide", context=context["id"], inputs=[plan["id"], review["id"]],

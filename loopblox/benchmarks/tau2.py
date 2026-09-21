@@ -5,6 +5,7 @@ from __future__ import annotations
 from collections import Counter, defaultdict
 import importlib.metadata
 import json
+import math
 import os
 from pathlib import Path
 import random
@@ -16,7 +17,7 @@ import time
 import uuid
 
 from loopblox.runtime.components import object_schema
-from loopblox.runtime.controller import ControllerRuntime, ModelMeter, model_call, model_usage
+from loopblox.runtime.controller import ControllerRuntime, Limits, ModelMeter, model_call, model_usage
 from loopblox.runtime.model import BudgetExhausted, HostFault, OperationalProblem, Tool, ToolResult, usage_tokens
 from loopblox.runtime.io import atomic_json, atomic_text, digest
 from loopblox.report import write_trace_report
@@ -25,7 +26,7 @@ from loopblox.report import write_trace_report
 
 UPSTREAM_REVISION = "672227c6b6676edc20d57ea53b7000262aae77b9"
 UPSTREAM_URL = "https://github.com/sierra-research/tau2-bench"
-DOMAINS = ("retail", "telecom")
+DEFAULT_TASK_LIMITS = Limits(seconds=900, actions=40, model_calls=64, output_tokens=65536)
 
 
 def configure(source, data):
@@ -39,37 +40,20 @@ def configure(source, data):
     logger.add(sys.stderr, level="ERROR")
 
 
-def task_groups(tasks, domain):
-    """Keep persona variants and connected retail customer/order scenarios together."""
-    parents = list(range(len(tasks)))
-    seen = {}
-
-    def find(index):
-        while parents[index] != index:
-            index = parents[index]
-        return index
-
-    for index, task in enumerate(tasks):
-        if domain == "telecom":
-            keys = [re.sub(r"\[PERSONA:.*?\]", "", task.id)]
-        else:
-            keys = [(key, str(value)) for action in task.evaluation_criteria.actions or []
-                    for key, value in action.arguments.items() if key in {"order_id", "user_id"}]
-            reason = task.user_scenario.instructions.reason_for_call
-            keys.append(("template", re.sub(r"\d+", "#", reason.lower()).strip()))
-        for key in keys:
-            if key in seen:
-                parents[find(index)] = find(seen[key])
-            seen[key] = index
+def task_groups(tasks):
+    """Keep telecom persona variants in the same task family."""
     groups = defaultdict(list)
-    for index, task in enumerate(tasks):
-        groups[find(index)].append(task)
+    for task in tasks:
+        groups[re.sub(r"\[PERSONA:.*?\]", "", task.id)].append(task)
     return list(groups.values())
 
 
-def prepare_suite(output, *, source, development=18, holdout=18, seed=1701, exclude_suites=()):
-    if min(development, holdout) < 1:
-        raise ValueError("Both splits require a positive task count")
+
+def prepare_telecom_suite(output, *, source, seed, development, exclude_suites=()):
+    """Freeze audited telecom training tasks and the sealed official test split."""
+    if development < 1:
+        raise ValueError("Use a positive development count")
+    domain = "telecom"
     source, output = Path(source).resolve(), Path(output).resolve()
     revision = subprocess.check_output(["git", "-C", str(source), "rev-parse", "HEAD"], text=True).strip()
     if revision != UPSTREAM_REVISION or subprocess.run(["git", "-C", str(source), "diff", "--quiet", "HEAD"]).returncode:
@@ -77,90 +61,122 @@ def prepare_suite(output, *, source, development=18, holdout=18, seed=1701, excl
     output.mkdir(parents=True, exist_ok=False)
     configure(source, source / "data")
     from tau2.data_model.tasks import RewardType, Task
+    from tau2.data_model.simulation import SimulationRun, TerminationReason
+    from tau2.evaluator.evaluator import EvaluationType, evaluate_simulation
     from tau2.evaluator.evaluator_env import EnvironmentEvaluator
     from tau2.registry import registry
-    reserved = {(task["family"], task["group"]) for path in exclude_suites for task in load_suite(path)["tasks"]}
-    rng, selected, audit = random.Random(seed), [], {}
-    for domain in DOMAINS:
-        raw = json.loads((source / "data/tau2/domains" / domain / "tasks.json").read_text())
-        tasks = [Task.model_validate(item) for item in raw]
-        eligible, excluded = [], Counter()
-        for task in tasks:
+    folder = source / "data/tau2/domains" / domain
+    official = json.loads((folder / "split_tasks.json").read_text())
+    tasks = [Task.model_validate(item) for item in json.loads((folder / "tasks.json").read_text())]
+    by_id = {task.id: task for task in tasks}
+    groups = {task.id: digest("\n".join(sorted(item.id for item in group)).encode())[:16]
+              for group in task_groups(tasks) for task in group}
+    reserved, reservation_sources = set(), []
+    for path in exclude_suites:
+        path = Path(path).resolve() / "manifest.json"
+        manifest = json.loads(path.read_text())
+        reserved.update((task["family"], groups.get(task["upstream_id"], task["group"]))
+                        for task in manifest["tasks"] if task["family"] == domain)
+        reserved.update(tuple(group) for group in manifest.get("excluded_groups", []))
+        reservation_sources.append(dict(path=str(path), sha256=digest(path.read_bytes())))
+    selected, checks, exclusions = [], [], Counter()
+    audited = {}
+
+    def audit_task(upstream_id):
+        if upstream_id not in audited:
+            task = by_id[upstream_id]
             criteria = task.evaluation_criteria
-            if not criteria or RewardType.ACTION in criteria.reward_basis:
-                excluded["missing_outcome_score_or_required_action_path"] += 1
-            elif criteria.nl_assertions:
-                excluded["nonempty_llm_judged_assertions"] += 1
-            elif any(action.name == "transfer_to_human_agents" for action in criteria.actions or []):
-                excluded["handoff_requires_separate_communication_audit"] += 1
-            else:
-                eligible.append(task)
-        groups = task_groups(eligible, domain)
-        # One representative per group; other variants never enter either split.
-        pools = defaultdict(list)
-        for group in groups:
-            group_id = digest("\n".join(sorted(item.id for item in group)).encode())[:16]
-            if (domain, group_id) in reserved:
-                excluded["reserved_for_integration"] += 1
-                continue
-            task = rng.choice(group)
-            if domain == "telecom":
-                match = re.match(r"\[([^]]+)\]([^[]+)", task.id)
-                faults = len(match[2].split("|"))
-                stratum = match[1] + ("/1" if faults == 1 else "/2-3" if faults <= 3 else "/4+")
-            else:
-                env = registry.get_env_constructor(domain)()
-                writes = [action.name for action in task.evaluation_criteria.actions or []
-                          if env.tools.tool_mutates_state(action.name)]
-                stratum = "+".join(sorted(set(writes))) or "no_write"
-            pools[stratum].append((task, group_id))
-        for pool in pools.values():
-            rng.shuffle(pool)
-        strata = sorted(pools)
-        rng.shuffle(strata)
-        accepted, scores = [], []
-        # Audit only candidate representatives, round-robin across control demands.
-        while len(accepted) < development + holdout and any(pools.values()):
-            for stratum in strata:
-                if not pools[stratum] or len(accepted) >= development + holdout:
-                    continue
-                task, group_id = pools[stratum].pop()
-                try:
-                    empty = EnvironmentEvaluator.calculate_reward(
-                        registry.get_env_constructor(domain), task, list(
-                            task.initial_state.message_history or [] if task.initial_state else []))
-                except Exception as error:
-                    excluded["empty_trajectory_audit_error"] += 1
-                    scores.append(dict(task=task.id, error=str(error)))
-                    continue
-                if empty.reward == 1:
-                    excluded["empty_trajectory_passes"] += 1
-                    continue
-                accepted.append((task, group_id, stratum))
-                scores.append(dict(task=task.id, empty_reward=empty.reward,
-                                   reward_basis=[value.value for value in task.evaluation_criteria.reward_basis]))
-        if len(accepted) < development + holdout:
-            atomic_json(output / "incomplete-audit.json", dict(domain=domain, available=len(accepted), excluded=dict(excluded)))
-            raise ValueError(f"Only {len(accepted)} audited independent {domain} groups; request a smaller subset")
-        # Interleave splits across the round-robin strata ordering.
-        counts = dict(development=0, holdout=0)
-        for index, (task, group_id, stratum) in enumerate(accepted):
-            split = "development" if index % 2 == 0 else "holdout"
-            if counts[split] >= {"development": development, "holdout": holdout}[split]:
-                split = "holdout" if split == "development" else "development"
-            selected.append(dict(task_id=f"{domain}-{split}-{counts[split]:04d}", family=domain,
-                                 upstream_id=task.id, split=split, seed=seed + len(selected),
-                                 group=group_id, stratum=stratum, task=task.model_dump(mode="json")))
-            counts[split] += 1
-        audit[domain] = dict(total=len(tasks), eligible=len(eligible), groups=len(groups),
-                             reward_bases=dict(Counter("+".join(t.evaluation_criteria.reward_basis) for t in tasks)),
-                             exclusions=dict(excluded), score_checks=scores)
+            if not criteria:
+                raise ValueError("Official task has no evaluation criteria: " + upstream_id)
+            if (criteria.nl_assertions or criteria.communicate_info or
+                    RewardType.ENV_ASSERTION not in criteria.reward_basis or not criteria.env_assertions or
+                    not set(criteria.reward_basis) <= {RewardType.ENV_ASSERTION, RewardType.ACTION}):
+                raise ValueError("Telecom requires deterministic official criteria: " + upstream_id)
+            empty = EnvironmentEvaluator.calculate_reward(registry.get_env_constructor(domain), task,
+                list(task.initial_state.message_history or [] if task.initial_state else []))
+            simulation = SimulationRun(id="empty-audit", task_id=upstream_id, start_time="", end_time="",
+                duration=0, termination_reason=TerminationReason.AGENT_STOP,
+                messages=list(task.initial_state.message_history or [] if task.initial_state else []))
+            full_reward = evaluate_simulation(simulation, task, EvaluationType.ALL, False, domain).reward
+            audited[upstream_id] = dict(upstream_id=upstream_id, group=groups[upstream_id],
+                reward_basis=[value.value for value in criteria.reward_basis],
+                empty_environment_reward=empty.reward,
+                empty_full_reward=full_reward,
+                nl_assertion_count=len(criteria.nl_assertions or []),
+                handoff=any(action.name == "transfer_to_human_agents" for action in criteria.actions or []))
+        return audited[upstream_id]
+
+    rng, pools = random.Random(seed), defaultdict(list)
+    test_groups = {groups[upstream_id] for upstream_id in official["test"]}
+    seen = set()
+    for upstream_id in official["train"]:
+        task, group = by_id[upstream_id], groups[upstream_id]
+        if (domain, group) in reserved:
+            exclusions["reserved_family"] += 1
+        elif group in test_groups:
+            exclusions["family_crosses_official_split"] += 1
+        elif group in seen:
+            exclusions["additional_family_variant"] += 1
+        elif not task.evaluation_criteria or set(task.evaluation_criteria.reward_basis) != {RewardType.ENV_ASSERTION}:
+            exclusions["not_environment_assertions_only"] += 1
+        elif audit_task(upstream_id)["empty_environment_reward"] == 1:
+            exclusions["empty_trajectory_passes"] += 1
+        else:
+            seen.add(group)
+            match = re.match(r"\[([^]]+)\]([^[]+)", upstream_id)
+            faults = len(match[2].split("|"))
+            stratum = match[1] + ("/1" if faults == 1 else "/2-3" if faults <= 3 else "/4+")
+            pools[stratum].append(upstream_id)
+    for pool in pools.values():
+        rng.shuffle(pool)
+    strata = sorted(pools)
+    rng.shuffle(strata)
+    development_ids = []
+    while len(development_ids) < development and any(pools.values()):
+        for stratum in strata:
+            if pools[stratum] and len(development_ids) < development:
+                development_ids.append(pools[stratum].pop())
+    selection_rule = ("Seeded shuffle within category/fault-count strata, then round-robin over seeded strata. "
+        "One representative per family from official train; environment-assertion-only, empty reward below one. "
+        "Exclude reserved and official-test families. Candidate execution outcomes do not inform selection.")
+    if len(development_ids) != development:
+        atomic_json(output / "incomplete-audit.json", dict(domain=domain, available=len(development_ids),
+                    requested=development, exclusions=dict(exclusions)))
+        raise ValueError("Not enough eligible official training families for the requested development batch")
+    for split, ids in (("development", development_ids), ("holdout", official["test"])):
+        for index, upstream_id in enumerate(ids):
+            task = by_id[upstream_id]
+            check = audit_task(upstream_id)
+            checks.append({**check, "split": split, "reserved_family": (domain, groups[upstream_id]) in reserved})
+            selected.append(dict(task_id=f"{domain}-{split}-{index:04d}", family=domain, upstream_id=upstream_id,
+                split=split, seed=seed + len(selected), group=groups[upstream_id], task=task.model_dump(mode="json")))
+    audit = {domain: dict(total=len(tasks), official_train=len(official["train"]), official_test=len(official["test"]),
+        selected=len(selected), score_checks=checks,
+        exclusions=dict(exclusions), selection=selection_rule,
+        policy="All official test IDs retain their original order and reward basis, including required actions. "
+               "Related groups and prior exposure must be reported; empty environment scores alone do not "
+               "establish action or NL assertion outcomes.")}
+    atomic_json(output / "selection.json", dict(domain=domain, seed=seed, development_rule=selection_rule,
+        development_upstream_ids=development_ids, holdout_rule="Every official test ID, in the pinned split order",
+        reservation_sources=reservation_sources, audit="audit.json",
+        exposure="Reservation manifests record prior suite membership, not proof of execution. Their families "
+                 "are excluded from development; all official test IDs remain, with reserved-family flags in "
+                 "the audit. Other historical exposure has not been exhaustively inventoried; do not claim "
+                 "that the full test set is globally unseen."))
+    return freeze_suite(output, source, selected, audit, seed, reserved,
+        scoring="Unmodified official evaluator, including environment and required-action checks; telecom has no "
+                "NL assertions and needs no grader model calls.",
+        grouping="Related families are recorded; every official test task is retained, including related variants.")
+
+
+def freeze_suite(output, source, selected, audit, seed, reserved, *, scoring, grouping):
+    """Freeze the benchmark implementation, data and audited task selection once."""
     upstream = output / "upstream"
     shutil.copytree(source / "src", upstream / "src", ignore=shutil.ignore_patterns("__pycache__", "*.pyc"))
     for name in ("pyproject.toml", "uv.lock", "LICENSE"):
         shutil.copyfile(source / name, upstream / name)
     shutil.copytree(source / "data/tau2/user_simulator", upstream / "data/tau2/user_simulator")
-    for domain in DOMAINS:
+    for domain in sorted({task["family"] for task in selected}):
         for path in (source / "data/tau2/domains" / domain).iterdir():
             if path.suffix in {".md", ".toml", ".json"} and path.name not in {
                     "tasks_voice.json", "audio_difficulty.json", "tasks_full.json", "tasks_small.json"}:
@@ -171,16 +187,13 @@ def prepare_suite(output, *, source, development=18, holdout=18, seed=1701, excl
     atomic_json(output / "audit.json", audit)
     atomic_json(output / "versions.json", versions)
     files = {str(path.relative_to(output)): digest(path.read_bytes()) for path in output.rglob("*") if path.is_file()}
-    manifest = dict(environment="tau2", revision=revision, source=UPSTREAM_URL, tasks=selected, files=files,
+    manifest = dict(environment="tau2", revision=UPSTREAM_REVISION, source=UPSTREAM_URL, tasks=selected, files=files,
                     seed=seed, excluded_groups=sorted(reserved),
                     feedback="Official domain policy, agent tool schemas and messages addressed to the agent only. "
                     "User scenarios, user-tool transcripts, assertions and reference actions remain host-private.",
-                    scoring="Unmodified official evaluator with each task's reward_basis; no required-action-path, "
-                    "nonempty LLM-assertion, handoff or empty-trajectory-passing tasks in this first subset.",
-                    grouping="One task per group; telecom persona variants grouped, retail shared customer/order IDs "
-                    "and digit-normalized request templates joined before splitting.")
+                    scoring=scoring, grouping=grouping)
     atomic_json(output / "manifest.json", manifest)
-    return manifest
+    return load_suite(output)
 
 
 def load_suite(path):
@@ -191,9 +204,15 @@ def load_suite(path):
     for name, expected in manifest["files"].items():
         if digest((path / name).read_bytes()) != expected:
             raise ValueError("Frozen suite changed: " + name)
-    groups = [task["family"] + ":" + task["group"] for task in manifest["tasks"]]
-    if len(groups) != len(set(groups)):
-        raise ValueError("Repeated task group in frozen subset")
+    identities = [(task["family"], task["upstream_id"]) for task in manifest["tasks"]]
+    if len(identities) != len(set(identities)):
+        raise ValueError("Repeated upstream task in frozen suite")
+    splits = {domain: json.loads((path / "upstream/data/tau2/domains" / domain / "split_tasks.json").read_text())
+              for domain in {task["family"] for task in manifest["tasks"]}}
+    for task in manifest["tasks"]:
+        official = {"development": "train", "holdout": "test"}[task["split"]]
+        if task["upstream_id"] not in splits[task["family"]][official]:
+            raise ValueError(f"{task['task_id']} is not in official {official}; frozen historical code is required for old custom splits")
     return manifest
 
 
@@ -251,21 +270,23 @@ class Tau2Runner:
         task_meter = ModelMeter(private / "usage.json", parent=meter, seconds=self.limits.seconds,
                                 model_calls=self.limits.model_calls, output_tokens=self.limits.output_tokens)
         started, runtime, orchestrator = time.monotonic(), None, None
-        environment_error = None
+        environment_error, grading = None, False
         row = dict(task_id=task_id, family=selected["family"], status="running", verification_verdict=None)
         original_completion = llm_utils.completion
         original_cost = llm_utils.get_response_cost
 
         def completion(**kwargs):
-            owner = runtime.active_component_id if runtime else None
-            request = dict(role="simulated_user", component_id=owner, phase="tool" if owner else "initialization",
+            owner = runtime.active_component_id if runtime and not grading else None
+            role = "grader" if grading else "simulated_user"
+            request = dict(role=role, component_id=owner, phase="evaluation" if grading else "tool" if owner else "initialization",
                            messages=kwargs["messages"], tools=kwargs.get("tools"), seed=kwargs.get("seed"))
             turn, call = model_call(
-                meter=task_meter, scope=scope + ":user", request=request, max_tokens=self.user_client.max_tokens,
+                meter=task_meter, scope=scope + (":grader" if grading else ":user"), request=request, max_tokens=self.user_client.max_tokens,
                 remaining=task_meter.remaining, time_origin=started,
-                invoke=lambda allowance, seconds: self.user_client.complete_chat(
+                invoke=lambda allowance: self.user_client.complete_chat(
                     kwargs["messages"], tools=kwargs.get("tools"), tool_choice=kwargs.get("tool_choice"),
-                    seed=kwargs.get("seed"), max_output_tokens=allowance, timeout_seconds=seconds),
+                    seed=kwargs.get("seed"), max_output_tokens=allowance, timeout_seconds=self.user_client.timeout,
+                    session_id=private.name + ":" + role),
             )
             call["response"] = turn.raw
             task_meter.save()
@@ -330,11 +351,22 @@ class Tau2Runner:
                                  instructions=task.user_scenario, llm=self.user_client.model,
                                  llm_args={"temperature": self.user_client.temperature, "num_retries": 0})
             orchestrator = Orchestrator(domain=selected["family"], agent=agent, user=user, environment=environment,
-                                        task=task, seed=selected["seed"], max_steps=self.limits.actions * 8,
-                                        timeout=self.limits.seconds)
+                                        task=task, seed=selected["seed"],
+                                        # The pinned upstream only compares this internal value;
+                                        # persisted limits retain None rather than JSON Infinity.
+                                        max_steps=math.inf if self.limits.actions is None else self.limits.actions * 8,
+                                        # The host meter owns charged time, including excluded
+                                        # no-effect model timeout waits. Upstream uses wall time.
+                                        timeout=None)
             orchestrator._run_start_time, orchestrator._run_start_perf = get_now(), time.perf_counter()
             orchestrator.initialize()
-            advance()
+            initialization_exhaustion = None
+            try:
+                advance()
+            except BudgetExhausted as error:
+                # A user turn can exhaust the shared meter before an agent worker
+                # starts. Close and score that actual trajectory below, too.
+                initialization_exhaustion = error
             disclosed = dict(problem="Help the simulated customer under the domain policy. All customer-facing replies, "
                              "questions and confirmations must use respond_to_user. Domain tools change the simulated "
                              "environment. When conversation_done is true, or your work is complete, return a final "
@@ -357,12 +389,21 @@ class Tau2Runner:
             runtime = ControllerRuntime(task=disclosed, tools=tuple(tools), client=self.client, meter=task_meter,
                                         limits=self.limits, trace_path=directory / "trace.json", scope=scope,
                                         image=self.worker_image, exposed=exposed)
-            record = runtime.run(source)
+            if initialization_exhaustion is None:
+                record = runtime.run(source)
+            else:
+                record = runtime.record
+                record.update(status="budget_exhausted", stop_reason=str(initialization_exhaustion),
+                              stop_phase="initialization", elapsed_seconds=0, timeout_wait_seconds=0,
+                              budget_seconds=0)
+                runtime.save()
             if environment_error is not None:
                 record.update(status="operational_failure" if isinstance(environment_error, OperationalProblem)
                               else "host_fault", stop_reason="tau2_environment_failed")
                 runtime.save()
             row.update(status=record["status"], stop_reason=record.get("stop_reason"))
+            if initialization_exhaustion is not None:
+                row["stop_phase"] = "initialization"
             # No task worker is alive here. Close the official simulation, then score.
             if not orchestrator.done:
                 orchestrator.done = True
@@ -372,7 +413,12 @@ class Tau2Runner:
             simulation = orchestrator._finalize()
             atomic_json(private / "simulation.json", simulation.model_dump(mode="json"))
             try:
+                grading = True
                 verification = evaluate_simulation(simulation, task, EvaluationType.ALL, False, selected["family"])
+                expected = task.evaluation_criteria.nl_assertions if task.evaluation_criteria else None
+                if (expected and "NL_ASSERTION" in (verification.reward_basis or [])
+                        and Counter(check.nl_assertion for check in verification.nl_assertions or []) != Counter(expected)):
+                    raise ValueError("The official grader did not return exactly one result per assertion")
                 atomic_json(private / "verification.json", verification.model_dump(mode="json"))
                 # Public feedback contains scores only, never reference actions or assertions.
                 public_score = dict(reward=verification.reward, reward_basis=verification.reward_basis,
@@ -386,8 +432,8 @@ class Tau2Runner:
                 atomic_json(private / "verification-error.json", dict(type=type(error).__name__, detail=str(error)))
                 row.update(status="verifier_failure", execution_status=record["status"],
                            verification_error="Official evaluator failed; details retained privately")
-        except BudgetExhausted as error:
-            row.update(status="budget_exhausted", stop_reason=str(error), verification_verdict="fail")
+                if isinstance(error, BudgetExhausted):
+                    row.update(verification_error_code="budget_exhausted", verification_stop_reason=str(error))
         except OperationalProblem as error:
             atomic_json(private / "initialization-error.json", dict(type=type(error).__name__, detail=str(error)))
             row.update(status="operational_failure", stop_reason=error.code)
@@ -405,11 +451,14 @@ class Tau2Runner:
                 atomic_json(private / "trajectory.json", [message.model_dump(mode="json") for message in orchestrator.trajectory])
                 orchestrator._cleanup()
             user_calls = [call for call in task_meter.calls if call["request"].get("role") == "simulated_user"]
+            grader_calls = [call for call in task_meter.calls if call["request"].get("role") == "grader"]
             row.update(usage=task_meter.summary(), user_usage=model_usage(user_calls),
+                       grader_usage=model_usage(grader_calls),
                        agent_usage=model_usage(runtime.calls if runtime else []),
                        actions=runtime.actions_used if runtime else 0, elapsed_seconds=time.monotonic() - started)
+            row["budget_seconds"] = max(0, row["elapsed_seconds"] - row["usage"]["timeout_wait_seconds"])
             if runtime is not None:
-                runtime.record["environment_usage"] = row["user_usage"]
+                runtime.record["environment_usage"] = model_usage(user_calls + grader_calls)
                 runtime.save()
                 write_trace_report(runtime.record, directory / "trace.html")
                 row.update(trace="trace.json", report="trace.html")

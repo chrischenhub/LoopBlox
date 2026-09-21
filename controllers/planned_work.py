@@ -4,11 +4,11 @@ def run(env):
     guidance = [plan["id"]]
     while True:
         context = env.component("context_full")
-        decision = env.component("think_decide", context=context["id"], inputs=guidance)
+        decision = env.component("decide", context=context["id"], inputs=guidance)
         if decision["value"]["kind"] == "completion_proposed":
             context = env.component("context_full")
             review = env.component("critique", context=context["id"], target=decision["id"])
-            if review["value"]["accept"]:
+            if review["value"]["verdict"] == "supported":
                 return decision["value"]["response"]
             guidance = [plan["id"], review["id"]]
             continue

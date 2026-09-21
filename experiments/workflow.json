@@ -5,10 +5,11 @@
     "context_recent": {},
     "context_summary": {},
     "plan": {},
-    "think_decide": {},
     "critique": {},
     "execute": {},
     "observe_full": {},
-    "observe_brief": {}
+    "observe_brief": {},
+    "decide": {},
+    "choose": {}
   }
 }

@@ -1,0 +1,17 @@
+{
+  "archived_at": "2026-09-21T18:48:22.177083+00:00",
+  "reason": "User retired the in-house researcher and selected native Codex as the default.",
+  "sources": {
+    "controllers/research.py": {
+      "path": "controller.py",
+      "sha256": "2f3d1d0353f0b67882db0c0011a385eb74e8d6a29c62101a26c7e2747b709557"
+    },
+    "loopblox/experiments/researcher_comparison.py": {
+      "path": "researcher_comparison.py",
+      "sha256": "da5dd27a51b4a13fb90c8cc76c07f1b22d8c44141fd04faba1b67eec7006575a"
+    }
+  },
+  "last_campaign": ".artifacts/tau2/telecom-researcher-comparison-20260921-research-only-01",
+  "last_status": "interrupted",
+  "historical_policy": "Frozen campaigns and their usage remain exact; no successful submission is inferred from the interrupted research-only review."
+}

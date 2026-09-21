@@ -1,6 +1,6 @@
 # Harness, Loop, components, and experiment scope
 
-This is LoopBlox's authoritative definition of Harness, Loop, Component, Invocation, behavioral scope, and experiment boundaries, updated September 14, 2026. It supersedes the requirement that every component be a macro stage. The Loop / loop-execution distinction does not classify the entire Harness. [AGENTS.md](AGENTS.md) covers engineering constraints and the research episode lifecycle; [COMPONENTS.md](COMPONENTS.md) contains current contracts; [CONTROLLER.md](CONTROLLER.md) describes composition APIs and examples.
+This is LoopBlox's authoritative definition of Harness, Loop, Component, Invocation, behavioral scope, and experiment boundaries, updated September 20, 2026. It supersedes the requirement that every component be a macro stage. The Loop / loop-execution distinction does not classify the entire Harness. [AGENTS.md](AGENTS.md) covers engineering constraints and the research episode lifecycle; [COMPONENTS.md](COMPONENTS.md) contains current contracts; [CONTROLLER.md](CONTROLLER.md) describes composition APIs and examples.
 
 This document distinguishes intended design from implemented behavior. Diagrams, concept names, and example contracts do not create callable APIs.
 
@@ -48,7 +48,7 @@ A **model/tool iteration** is one model decision with the actions and feedback i
 
 A macro stage is one kind of Component and needs no separate stage engine. A component can make zero, one, or multiple model calls and execute multiple tools. Its fixed contract and actual execution determine call counts; a single diagram box does not imply a single call.
 
-The researcher chooses approved components, allowed implementation options, and composition. Approved implementations and prompts stay fixed within an episode. Ordinary Python functions in a candidate can organize nested control flow, and the researcher can modify composition code where the experiment allows it. This does not grant access to approved component internals. A wrapper creates neither an approved component nor a recorded component boundary. New components still require proposal and human incorporation.
+The researcher chooses approved components, allowed implementation options, and composition. Approved implementations and fixed framing stay fixed within an episode. When exposed, Judge explicitly permits candidate-authored typed judgment questions and classification criteria; other component prompts remain fixed. Ordinary Python functions in a candidate can organize nested control flow, and the researcher can modify composition code where the experiment allows it. This does not grant access to approved component internals. A wrapper creates neither an approved component nor a recorded component boundary. New components still require proposal and human incorporation.
 
 ### 3.1 Capability families and subcomponents
 
@@ -56,7 +56,7 @@ The library has four **families**: Context / Evidence, Propose, Assess, and Act.
 
 A **subcomponent** is a callable Component belonging to a catalog family. Membership does not imply execution inside a parent component. Families are not callable, create no invocations or extra cost, and grant no access to sibling components. Each current subcomponent declares one primary catalog family; its full contract describes behavior spanning multiple responsibilities. For example, executing a test is an Act tool behavior whose results may inform Assess.
 
-Every public entry includes frozen `family: {id, label, description}` metadata. Its own `parameters` define its allowed arguments; there is no family-level `mode` or separate dispatch API. `category` and `reference_categories` continue to describe result-reference types. Plan belongs to Propose and Critique to Assess, but both return `analysis_result`. Family membership and compatible references are separate facts.
+Every public entry includes frozen `family: {id, label, description}` metadata. Its own `parameters` define its allowed arguments; there is no family-level `mode` or separate dispatch API. `category` and `reference_categories` continue to describe result-reference types. Plan belongs to Propose and returns `plan`; Critique belongs to Assess and returns `analysis_result`. Family membership and compatible references are separate facts.
 
 Current composition uses complete Python controllers calling exposed subcomponents directly. The default model/tool cycle is a baseline controller recipe, with no AgentWork registration or trusted composite-dispatch path. If a future complete behavior needs multiple model or tool calls, define and implement that contract first. Neither family membership nor the term "low level" permanently restricts call counts.
 
@@ -81,11 +81,11 @@ This is the current `planned_work.py` control flow. Indentation shows Python bra
 Complete Loop: handle the current user input
 ├─ Context -> Plan
 ├─ Python loop
-│  ├─ Context -> ThinkDecide
+│  ├─ Context -> Decide
 │  ├─ Action proposal: Execute -> Observe -> continue
 │  └─ Completion proposal: Context -> Critique(target=decision ID)
-│     ├─ Rejected: retain assessment reference -> continue
-│     └─ Accepted: outer controller returns the response
+│     ├─ Contradicted or unknown: retain assessment reference -> continue
+│     └─ Supported: outer controller returns the response
 └─ Model requests and tool actions belong to their owning component invocations
 ```
 
@@ -124,7 +124,7 @@ Components should remain complete behaviors worth testing experimentally. Do not
 | Internal capabilities and options | Which approved components and tools can it use? Can it make repeated model interactions? Which arguments vary and which behaviors stay fixed? |
 | Return and failure conditions | When does control return to the caller? How are ordinary failures represented? How do interruption, exhaustion, and faults propagate? |
 
-The contract owns internal behavior; the parent controller owns call timing and subsequent transitions. Map responsibility, scope, and integration points to the contract and concrete call sites without adding a competing hierarchy schema. The researcher can change approved composition, but cannot expand its permissions through fabricated results, replacement prompts, or hidden scoring access.
+The contract owns internal behavior; the parent controller owns call timing and subsequent transitions. Map responsibility, scope, and integration points to the contract and concrete call sites without adding a competing hierarchy schema. The researcher can change approved composition, but cannot expand its permissions through fabricated results, replacement prompts outside Judge's typed-question contract, or hidden scoring access.
 
 `loopblox/runtime/components.py` solely owns executable per-component contracts: families and membership, parameter/result schemas, reference categories, fixed prompts, and `contract` fields for responsibility, scope, internals, call-cost semantics, effects, return, and failure conditions. The host reads allowed reference categories from parameter schemas. They are API result types rather than Harness layers. [COMPONENTS.md](COMPONENTS.md) is generated from the catalog. An episode's `component-contracts.md` and `components.json` derive from the same filtered catalog, exposing only its approved components and options. Source visibility does not expand that boundary.
 
@@ -132,7 +132,7 @@ An experiment must distinguish changes to component identity, caller triggers/tr
 
 A **future Task Execution component**, for example, might take an explicit subgoal, approved plan, and context reference; make multiple model/tool calls; and return stage artifacts, attempted actions, and unresolved issues. It would hand control back on a defined stage return condition or blockage. The parent would choose review, further work, or completion. Exact fields, prompts, and implementation must be approved before incorporation; this example creates no API.
 
-Matching names do not guarantee matching contracts. Current `plan` produces a plan artifact; labeling it Planning does not give it independent multi-step planning behavior. Recheck scope, state visibility, and return semantics when wrapping an existing controller.
+Matching names do not guarantee matching contracts. Current `plan` proposes an immutable list of steps with objectives and completion requirements. A controller can scope decisions to one of those steps, but Plan does not execute a step, maintain its progress, or start a worker. Recheck scope, state visibility, and return semantics when wrapping an existing controller.
 
 ## 7. Completion signals and control ownership
 
@@ -145,9 +145,9 @@ Matching names do not guarantee matching contracts. Current `plan` produces a pl
 
 Nested components must bind completion proposals to their current target scope. Finishing a subgoal does not automatically authorize the final user response. An ordinary component failure need not terminate the outer run; recovery follows its explicit contract. Starting a subcomponent cannot reset interruption or resource limits.
 
-Current `decide` / `think_decide` output is `ActionsSelected(actions)` or `CompletionProposed(response)`. The JSON contract is `loopblox/runtime/components.py::decision_schema`. Decisions concern the whole task; separate stage-goal and stage-completion APIs do not exist. Empty actions do not mean completion. `kind="completion_proposed"` carries a proposed `response`, which the caller may accept; it may describe an actual blockage.
+Current `decide` reasons and selects actions jointly. Without an explicit scope it returns `ActionsSelected(actions)` or `CompletionProposed(response)`. With `scope={plan: plan_id, step: index}`, the host resolves one original Plan step and the decision returns actions, `scope_done_proposed`, or `scope_blocked`. The JSON contract is `loopblox/runtime/components.py::decision_schema`. Empty actions do not mean completion. Whole-task `kind="completion_proposed"` carries a proposed `response`, which the caller may accept; it may describe an actual blockage. Local completion and blockage concern only the selected step and cannot terminate the task by themselves.
 
-Controllers handle decision results directly. They may accept completion or pass the decision ID to Critique and continue after rejection. Ordinary Python helpers can organize this control flow without creating an extra work result or `work` reference type. Independent subgoal and subtask-completion contracts remain unimplemented.
+Controllers handle decision results directly. They may inspect completion or pass the decision ID to Critique and continue when evidence is contradicted or unknown. The host derives Critique's overall verdict from its evidence-linked assessments; it is a model judgment, not a verified score. Choose can compare existing same-scope decisions and return one original reference or decline all of them. Neither operation executes actions. Ordinary Python helpers organize step iteration, recovery, replanning, and final return without an extra work result, progress engine, or `work` reference type.
 
 Controllers own conditional repetition; components may also repeat internally under their fixed contracts. Normal completion does not require exactly N iterations. A model transport retry follows fixed host rules, while a new decision is a new behavioral call. Recovery branches cannot implicitly replay tool actions.
 
@@ -210,13 +210,13 @@ The following scopes are experiment conditions using the same runtime:
 | Internal execution strategy | Explicitly exposed internal candidate composition or catalog-approved options | Outer macro workflow and other behavior |
 | Joint search | Specified macro and internal changes | Unexposed implementations and environment constraints |
 
-Approved implementations and prompts stay fixed even in internal or joint search, including those of incorporated composite components. The researcher edits allowed candidate composition or selects catalog options. Rewriting approved internals requires a proposal, human incorporation, and a new library condition and episode.
+Approved implementations and fixed framing stay fixed even in internal or joint search, including those of incorporated composite components. Judge's caller-defined questions are an explicit parameter, not edits to those internals. The researcher edits allowed candidate composition or selects catalog options, including Judge questions and Noul/Choice criteria when exposed. Rewriting approved internals requires a proposal, human incorporation, and a new library condition and episode.
 
 An example instruction for a future macro experiment is:
 
 > Compare macro compositions of Planning, Task Execution, and Review. Select, order, repeat, and conditionally invoke these approved components while fixing their internals and options. A subcomponent return completes only that call. The outer controller decides whether to continue and when to answer. Use development feedback during search, then evaluate complete outcomes and total cost on tasks excluded from search.
 
-This is a future contract example; Task Execution and AgentWork are not current components. The supplied `experiments/workflow.json` directly exposes context, Plan, ThinkDecide, Critique, Execute, and observation components. It permits both Python composition and catalog-option changes, making it joint search without a fixed internal or outer workflow. [CONTROLLER.md](CONTROLLER.md) provides operational instructions. New episodes copy `public/controller-api.md`, `public/loop.md`, the frozen experiment specification, and its filtered catalog.
+This is a future contract example; Task Execution and AgentWork are not current components. The supplied `experiments/workflow.json` directly exposes context, Plan, Decide, Critique, Execute, and observation components. It permits both Python composition and catalog-option changes, making it joint search without a fixed internal or outer workflow. [CONTROLLER.md](CONTROLLER.md) provides operational instructions. New episodes copy `public/controller-api.md`, `public/loop.md`, the frozen experiment specification, and its filtered catalog.
 
 When several levels change together, gains cannot be attributed solely to macro structure. Traces suggest explanations; matched controls and ablations test them. A single success does not establish improvement, and a searched composition may not beat the original baseline. Freeze the model, budget, and statistical protocol separately for each experiment.
 
@@ -224,11 +224,12 @@ When several levels change together, gains cannot be attributed solely to macro 
 
 - `controllers/*.py` define complete task controllers that directly compose exposed subcomponents. `reactive.py` is the shared baseline; completion review references decision results directly.
 - `loopblox/runtime/components.py` owns four families and the membership and contracts of 14 subcomponents. Each current model-bearing subcomponent makes one logical model call, with every transport attempt charged separately. Families add no calls or permissions.
-- AgentWork, `work` references, and trusted composite dispatch have been removed. Independent subgoal-completion contracts and subagent components are not implemented.
-- Research entry points freeze the question, outer components, and discrete options. The host restricts calls but does not enforce edit constraints at arbitrary internal source positions.
+- Plan steps can scope decisions; Python owns their composition and continuation. AgentWork, `work` references, trusted composite dispatch, and subagent components are absent.
+- Research entry points freeze the question, outer components, and allowed options. Judge questions and category definitions may vary with the frozen candidate source. The host restricts calls but does not enforce edit constraints at arbitrary internal source positions.
 - Invocation records contain actual parent-child relationships. Normal finalization writes JSON traces and expandable read-only HTML showing executed paths and frozen implementations without inventing unexecuted branches.
-- Decide's `tool_filter` filters tool capability categories. `inspect_mutate` selects inspection and mutation tools. Every option still concerns whole-task completion.
+- Decide's `tool_filter` filters tool capability categories. `inspect_mutate` selects inspection and mutation tools. Tool filters are independent of task or Plan-step scope and do not grant additional permissions.
+- Full context can combine an explicit frozen base with later evidence; summaries preserve their source cursor. Recent context counts four first-observed executions instead of model calls. Brief observations can be paged and later expanded to full results; new views prefer a full observation, while existing views stay frozen.
 - Tool groups run serially. The host owns models, permissions, scoring, budgets, and original facts.
-- Research connects to environments through a host-provided task runner. τ²-bench uses `ResearchSession` and `loopblox/experiments/study.py`. TextWorld is retired; README owns domain direction and scoring limitations. SpreadsheetBench 2 and Terminal-Bench are not integrated. The obsolete SWE-bench placeholder adapter and entry point have been removed.
+- Research connects to environments through a host-provided task runner. τ²-bench uses `loopblox/benchmarks/tau2.py` and `ResearchSession`; the specialist/mixed-domain caller is archived outside the active package. [experiment.md](experiment.md) owns the current continuous protocol and its launch readiness. TextWorld is retired; README owns benchmark direction and scoring limitations. SpreadsheetBench 2 and Terminal-Bench are not integrated. The obsolete SWE-bench placeholder adapter and entry point have been removed.
 
 Start subsequent work with a complete experiment around one explicit behavioral variable: define responsibility, scope, and invariants; choose existing components or propose a necessary one; then implement, record, and evaluate. These definitions do not require a speculative nesting engine, registry, policy framework, or graph language.
