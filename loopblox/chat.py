@@ -250,7 +250,7 @@ class Handler(BaseHTTPRequestHandler):
                 if re.fullmatch(r"/assets/fonts/[A-Za-z0-9_.-]+", path):
                     relative = path[1:]
                 if relative:
-                    file = ROOT / "site" / relative
+                    file = Path(__file__).with_name("chat_assets") / relative
                     return self.reply(200, file.read_bytes(), mimetypes.guess_type(file.name)[0] or "application/octet-stream")
             self.reply(404, {"error": "Not found."})
         except FileNotFoundError:

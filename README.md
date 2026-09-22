@@ -117,7 +117,7 @@ docker pull python:3.12-slim
 python3 -B -m loopblox.chat serve
 ```
 
-Open http://127.0.0.1:8766/ to chat and watch the baseline's component calls. Each message uses the model service. See the [playground guide](site/README.md#local-chat-and-loop-view) for limits and saved traces.
+Open http://127.0.0.1:8766/ to chat and watch the baseline's component calls. Each message uses the model service. See the [playground guide](docs/playground.md) for limits and saved traces.
 
 ## Find your way around the code
 

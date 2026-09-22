@@ -1,6 +1,6 @@
 # Pinned sources and third-party licenses
 
-These sources support the task environment and bundled website assets. Pinned versions identify experiment dependencies, not the latest upstream releases.
+These sources support the task environment and bundled playground assets. Pinned versions identify experiment dependencies, not the latest upstream releases.
 
 ## Task environment
 
@@ -8,10 +8,10 @@ These sources support the task environment and bundled website assets. Pinned ve
 
 ## Bundled fonts
 
-The website serves local font files and retains their licenses in both source and build output:
+The local playground serves bundled font files with their licenses:
 
-- Departure Mono: [license](../site/assets/fonts/DepartureMono-LICENSE).
-- JetBrains Mono: [SIL Open Font License](../site/assets/fonts/JetBrainsMono-OFL.txt).
-- Source Serif 4: [SIL Open Font License](../site/assets/fonts/SourceSerif4-OFL.txt).
+- Departure Mono: [license](../loopblox/chat_assets/assets/fonts/DepartureMono-LICENSE).
+- JetBrains Mono: [SIL Open Font License](../loopblox/chat_assets/assets/fonts/JetBrainsMono-OFL.txt).
+- Source Serif 4: [SIL Open Font License](../loopblox/chat_assets/assets/fonts/SourceSerif4-OFL.txt).
 
-See the [font guide](../site/assets/fonts/README.md) for their roles. Font licensing is separate from the repository code's [MIT license](../LICENSE).
+See the [font guide](../loopblox/chat_assets/assets/fonts/README.md) for their roles. Font licensing is separate from the repository code's [MIT license](../LICENSE).

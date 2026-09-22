@@ -8,5 +8,5 @@ __pycache__/
 /archive/
 .claude/
 .openai/
-/site/dist/
+/site/
 .DS_Store

@@ -5,7 +5,7 @@
 - JetBrains Mono — https://github.com/JetBrains/JetBrainsMono/tree/19371302b95d218af43299bce79ddbddd0bc364d
   Code and component identifiers. SIL OFL;
   see JetBrainsMono-OFL.txt.
-- Source Serif 4 (variable, upright + italic) — https://github.com/adobe-fonts/source-serif
+- Source Serif 4 (variable, upright) — https://github.com/adobe-fonts/source-serif
   Running prose and headings. SIL OFL; see
   SourceSerif4-OFL.txt.
 

@@ -385,6 +385,11 @@ experiment's library. Ordinary composition search needs no approval.
 
 ## 6. Website
 
+`site/` is a local, Git-ignored promotional website; it is not a repository runtime dependency.
+The tracked playground assets live in `loopblox/chat_assets/`, with their guide in
+`docs/playground.md`. The independent research visualizer lives in
+`loopblox/research/visualize.py`.
+
 `site/` is the English, read-only LoopBlox introduction focused on domain loop auto
 research on one benchmark. Its SVG illustrations explain continuous research and
 the supplied reactive task loop; they do not execute controllers or depict live runs.
