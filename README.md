@@ -33,16 +33,11 @@ The [14 components](COMPONENTS.md) cover context and evidence, proposals, assess
 
 ## How research works
 
-![Research cycle: review results, edit a Loop, request execution, score and review task records, and carry research notes into the next iteration.](docs/assets/research-process.png)
+![Research cycle: review results, edit the task Loop, evaluate it, and save findings for the next iteration.](docs/assets/research-process.png)
 
-The outer **Research Loop** is the researcher's cycle of inspecting evidence, editing Python, and requesting evaluations. The inner **Harness Loop — RSI Target** is the candidate task Loop: the `run(env)` code being improved. LoopBlox validates requests and executes that code through the fixed host and component library. Official scores and Jev analysis feed the next round of investigation; saved code, change rationales, and research notes preserve what was tried. Model weights and the host's scoring rules stay fixed.
+LoopBlox first runs the baseline on ten telecom tasks. Codex reviews the scores and traces, edits the Loop, and requests an evaluation on the same tasks.
 
-1. Freeze ten official telecom training tasks, the component boundary, baseline, model settings and task limits. Run the baseline once on all ten tasks, with official scoring and [Jev analysis](docs/jev.md).
-2. Let the researcher inspect the evidence and save one new Loop by default, at most two per iteration. Each saved Loop runs on all ten tasks with fresh environments. Two candidates therefore require twenty new task runs; the baseline's recorded results are reused.
-3. Complete mandatory Jev analysis after every task run. The host ranks fully evaluated Loops by official success rate, then agent input tokens, then agent model calls. A full tie retains the current best Loop.
-4. Checkpoint once every candidate saved in the iteration has complete scores and analysis. Preserve the hypothesis, evidence, failed approaches and next direction, then continue research.
-
-Search changes Python compositions; model weights stay fixed. Task execution is serial, with an isolated worker for each run. Per-task budgets apply; the shared research budget and iteration count are uncapped. Stopping preserves the current best fully evaluated Loop and does not dispatch test tasks. [experiment.md](experiment.md) owns the detailed rules, including infrastructure recovery; [running.md](docs/running.md#run-stop-and-recover) provides the commands.
+LoopBlox keeps the best Loop by success rate, then cost. Codex saves its findings and tries the next change. This continues until you stop it. The [research protocol](experiment.md) defines evaluation and recovery rules.
 
 ## Quick start
 
