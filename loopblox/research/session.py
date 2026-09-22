@@ -6,6 +6,8 @@ import copy
 import json
 import time
 import shutil
+from concurrent.futures import ThreadPoolExecutor, wait, FIRST_COMPLETED
+from threading import Event
 from pathlib import Path
 
 from loopblox import ROOT, snapshot_implementation
@@ -15,7 +17,7 @@ from loopblox.research.workspace import ResearchWorkspace, configuration as work
 from loopblox.runtime.components import catalog, object_schema, render_contracts, validate
 from loopblox.runtime.controller import Limits, MAX_SOURCE_BYTES, ModelMeter
 from loopblox.runtime.model import BudgetExhausted, HostFault, OperationalProblem, Tool, ToolResult
-from loopblox.runtime.io import atomic_json, atomic_text, digest
+from loopblox.runtime.io import atomic_json, atomic_text, digest, cancellation_scope, check_cancelled
 from loopblox.report import summarize_trace
 
 
@@ -134,7 +136,7 @@ class ResearchSession:
     def __init__(self, *, output: Path, development: tuple[str, ...],
                  run_task, worker_image: str, setup: dict,
                  experiment: dict, baseline_source: str,
-                 task_limits: Limits, check_stop=lambda: None):
+                 task_limits: Limits, check_stop=lambda: None, evaluation_workers=1):
         if not development or len(set(development)) != len(development):
             raise ValueError("Development tasks must be nonempty and unique")
         self.jev_configuration = jev.configuration()
@@ -152,6 +154,9 @@ class ResearchSession:
         (self.public / "proposals").mkdir()
         self.development = development
         self.check_stop = check_stop
+        if type(evaluation_workers) is not int or evaluation_workers < 1:
+            raise ValueError("evaluation_workers must be a positive integer")
+        self.evaluation_workers = evaluation_workers
         self.task_selection = (
             "Every new candidate runs once on the entire fixed development list, in its frozen order. "
             "Existing sources reuse their recorded results. Task IDs: " + ", ".join(development) + "."
@@ -165,7 +170,7 @@ class ResearchSession:
                           task_runs_used=0, iterations=[], pending_candidates=[])
         atomic_json(self.private / "setup.json", {
             **setup, "development": development,
-            "sampling": self.task_selection,
+            "sampling": self.task_selection, "evaluation_workers": self.evaluation_workers,
             "research_budgets": {**self.budgets, "task_runs": None},
             "task_limits": vars(task_limits), "worker_image": worker_image, "components": catalog(),
             "experiment": self.experiment, "jev": self.jev_configuration,
@@ -343,52 +348,65 @@ class ResearchSession:
         evaluation["status"] = "running"
         atomic_json(result_path, evaluation)
         try:
-            for index, row in enumerate(rows):
-                if row["status"] != "not_started":
-                    continue
-                self.check_stop()
-                self.state["task_runs_used"] += 1
-                row["status"] = "running"
+            stopped = Event()
+            pending = {}
+            failures = []
+            unstarted = iter((index, row) for index, row in enumerate(rows) if row["status"] == "not_started")
+            pool = ThreadPoolExecutor(max_workers=self.evaluation_workers, thread_name_prefix="evaluation")
+
+            def collect(future, row):
+                try:
+                    result, error, failure_status = future.result()
+                except BaseException as caught:
+                    # Also retain rows if record writing or feedback derivation fails.
+                    stopped.set()
+                    saved = directory / row["directory"] / "result.json"
+                    result = json.loads(saved.read_text()) if saved.is_file() else {}
+                    failure_status = "host_fault" if isinstance(caught, Exception) else None
+                    result.update(status=failure_status or "interrupted", verification_verdict=None,
+                                  stop_reason=str(caught))
+                    error = HostFault(str(caught)) if failure_status else caught
+                row.update(result)
+                if failure_status:
+                    self.state["research_status"] = failure_status
                 self.save()
                 atomic_json(result_path, evaluation)
-                started = time.monotonic()
-                try:
-                    row.update(self.run_task(
-                        task_id=row["task_id"], source=sources[row["candidate_id"]], scope=f"{evaluation_id}-{index}",
-                        directory=directory / row["directory"], meter=self.meter,
-                        exposed=copy.deepcopy(self.experiment["exposed"]),
-                    ))
-                except Exception as error:
-                    row.update(status="host_fault", stop_reason=str(error), verification_verdict=None)
-                except BaseException:
-                    row.update(status="interrupted", stop_reason="host_interrupted", verification_verdict=None)
-                    raise
-                finally:
-                    row["elapsed_seconds"] = time.monotonic() - started
-                    self.save()
-                    atomic_json(result_path, evaluation)
-                if row["status"] in {"host_fault", "operational_failure", "verifier_failure"}:
-                    self.state["research_status"] = row["status"]
-                    # HostFault propagates through the research tool gateway, ending
-                    # the worker before it can submit or execute another batched action.
-                    raise HostFault(f"Development evaluation {evaluation_id}/{row['directory']} failed: {row['status']}")
-                trace = directory / row["directory"] / "trace.json"
-                semantic = trace.with_name("jev.json")
-                try:
-                    jev.analyze_run(trace, configuration=self.jev_configuration, meter=self.meter,
-                                    scope=f"{evaluation_id}-{index}")
-                except BudgetExhausted:
-                    self.state["research_status"] = "budget_exhausted"
-                    raise
-                except Exception as error:
-                    self.state["research_status"] = "operational_failure"
-                    raise HostFault(f"Jev analysis failed for {evaluation_id}/{row['directory']}: {error}") from error
-                finally:
-                    if semantic.is_file():
-                        row["jev"] = jev.feedback(json.loads(semantic.read_text()),
-                                                  str(semantic.relative_to(self.public)), json.loads(trace.read_text()))
-                    self.save()
-                    atomic_json(result_path, evaluation)
+                return error
+
+            try:
+                exhausted = False
+                while pending or not exhausted:
+                    self.check_stop()
+                    while not exhausted and not stopped.is_set() and len(pending) < self.evaluation_workers:
+                        item = next(unstarted, None)
+                        if item is None:
+                            exhausted = True
+                            break
+                        index, row = item
+                        self.check_stop()
+                        self.state["task_runs_used"] += 1
+                        row["status"] = "running"
+                        self.save()
+                        atomic_json(result_path, evaluation)
+                        future = pool.submit(self._evaluate_run, row=copy.deepcopy(row),
+                            source=sources[row["candidate_id"]], directory=directory / row["directory"],
+                            scope=f"{evaluation_id}-{index}", stopped=stopped)
+                        pending[future] = row
+                    if not pending:
+                        break
+                    done, _ = wait(pending, timeout=0.2, return_when=FIRST_COMPLETED)
+                    for future in done:
+                        error = collect(future, pending.pop(future))
+                        if error is not None:
+                            failures.append(error)
+                if failures:
+                    # Drain all lanes so peer cancellation cannot hide the original fault.
+                    raise next((error for error in failures if isinstance(error, Exception)), failures[0])
+            finally:
+                stopped.set()
+                pool.shutdown(wait=True)
+                for future, row in pending.items():
+                    collect(future, row)
             if any(row.get("verification_verdict") not in {"pass", "fail"} for row in rows):
                 self.state["research_status"] = "incomplete_evaluation"
                 raise HostFault("The complete task batch requires official scores; missing scores are not failures")
@@ -416,6 +434,46 @@ class ResearchSession:
             research_usage=self.meter.summary(),
             evidence_path="evidence.json",
         )
+
+    def _evaluate_run(self, *, row, source, directory, scope, stopped):
+        """One pipeline lane: fresh task, official score, then mandatory Jev analysis."""
+        started = time.monotonic()
+        trace, semantic = directory / "trace.json", directory / "jev.json"
+        error, failure_status = None, None
+        stage = "task"
+        with cancellation_scope(stopped), self.meter.activity(scope):
+            try:
+                check_cancelled()
+                row.update(self.run_task(task_id=row["task_id"], source=source, scope=scope,
+                    directory=directory, meter=self.meter, exposed=copy.deepcopy(self.experiment["exposed"])))
+                if row["status"] in {"host_fault", "operational_failure", "verifier_failure"}:
+                    failure_status = row["status"]
+                    raise HostFault(f"Development evaluation {scope} failed: {row['status']}")
+                row["elapsed_seconds"] = time.monotonic() - started
+                stage = "analysis"
+                check_cancelled()
+                jev.analyze_run(trace, configuration=self.jev_configuration, meter=self.meter, scope=scope)
+            except BaseException as caught:
+                stopped.set()  # Refuse further model dispatch in every lane immediately.
+                error = caught
+                if stage == "task" and failure_status is None:
+                    saved = directory / "result.json"
+                    if saved.is_file():
+                        row.update(json.loads(saved.read_text()))
+                    row.update(status="host_fault" if isinstance(caught, Exception) else "interrupted",
+                               stop_reason=str(caught), verification_verdict=None)
+                if isinstance(caught, BudgetExhausted):
+                    failure_status = "budget_exhausted"
+                elif isinstance(caught, Exception):
+                    failure_status = failure_status or ("operational_failure" if stage == "analysis" else "host_fault")
+                    error = HostFault(f"{stage.capitalize()} failed for {scope}: {caught}")
+            finally:
+                if stage == "task":
+                    row["elapsed_seconds"] = time.monotonic() - started
+                if semantic.is_file():
+                    row["jev"] = jev.feedback(json.loads(semantic.read_text()),
+                        str(semantic.relative_to(self.public)), json.loads(trace.read_text()))
+            return row, error, failure_status
 
     def ranking(self):
         """Only complete, scored and analyzed fixed batches can compete."""

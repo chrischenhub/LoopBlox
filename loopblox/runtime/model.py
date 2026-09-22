@@ -147,6 +147,7 @@ class ChatCompletionsClient:
         temperature: float = 0.0,
         max_tokens: int = 8192,
         timeout: float = 90.0,
+        api: str = "chat_completions",
     ):
         self.api_key = api_key
         self.base_url = base_url.rstrip("/")
@@ -154,6 +155,11 @@ class ChatCompletionsClient:
         self.temperature = temperature
         self.max_tokens = max_tokens
         self.timeout = timeout
+        if api not in {"chat_completions", "responses"}:
+            raise HostFault("Unsupported model API: " + api)
+        self.api = api
+        self.reasoning_effort = "high" if api == "responses" else None
+        self.structured_output = "json_object" if api == "responses" else "json_schema"
         self.session_id = uuid.uuid4().hex
 
     @classmethod
@@ -171,11 +177,13 @@ class ChatCompletionsClient:
             max_tokens = int(os.environ.get(f"{prefix}_MAX_TOKENS", "8192"))
         except ValueError as error:
             raise HostFault(f"{prefix}_TEMPERATURE and {prefix}_MAX_TOKENS must be numeric") from error
+        model = os.environ.get(f"{prefix}_MODEL", "muse-spark-1.3-contributor" if provider == "opencode_go" else "deepseek-v4-flash")
         return cls(
             api_key=api_key,
             base_url=os.environ.get(f"{prefix}_BASE_URL", "https://opencode.ai/zen/go/v1"
                                     if provider == "opencode_go" else "https://freeinference.org/v1"),
-            model=os.environ.get(f"{prefix}_MODEL", "glm-5.1" if provider == "opencode_go" else "deepseek-v4-flash"),
+            model=model,
+            api="responses" if provider == "opencode_go" and model == "muse-spark-1.3-contributor" else "chat_completions",
             temperature=temperature,
             max_tokens=max_tokens,
         )
@@ -203,8 +211,8 @@ class ChatCompletionsClient:
                 },
             },
         }
-        payload = self._request("POST", "/chat/completions", body, timeout_seconds=timeout_seconds,
-                                session_id=session_id)
+        payload = self._completion_request(body, timeout_seconds=timeout_seconds,
+                                           session_id=session_id)
         usage = payload.get("usage")
         usage = _json_copy(usage, "provider usage") if isinstance(usage, dict) else None
         try:
@@ -252,7 +260,7 @@ class ChatCompletionsClient:
                 effects="none",
             )
         return PlanningTurn(
-            raw=_json_copy(message, "raw assistant turn"),
+            raw=_json_copy(payload.get("provider_response", payload), "raw provider response"),
             output=_json_copy(output, "Planning output"),
             usage=usage,
         )
@@ -265,8 +273,8 @@ class ChatCompletionsClient:
             body.update(tools=tools, tool_choice=tool_choice or "auto")
         if seed is not None:
             body["seed"] = seed
-        payload = self._request("POST", "/chat/completions", body, timeout_seconds=timeout_seconds,
-                                session_id=session_id)
+        payload = self._completion_request(body, timeout_seconds=timeout_seconds,
+                                           session_id=session_id)
         usage = payload.get("usage") if isinstance(payload.get("usage"), dict) else None
         try:
             message = payload["choices"][0]["message"]
@@ -278,6 +286,87 @@ class ChatCompletionsClient:
                                      effects="none", usage=usage, response=payload) from error
         return PlanningTurn(raw=_json_copy(payload, "native chat response"),
                             output=_json_copy(message, "native assistant message"), usage=usage)
+
+    def _completion_request(self, body, *, timeout_seconds, session_id):
+        if self.api == "chat_completions":
+            return self._request("POST", "/chat/completions", body,
+                                 timeout_seconds=timeout_seconds, session_id=session_id)
+        # Keep benchmark messages/tool semantics; adapt only the provider wire format.
+        inputs = []
+        for message in body["messages"]:
+            role = message["role"]
+            if role == "tool":
+                inputs.append(dict(type="function_call_output", call_id=message["tool_call_id"],
+                                   output=message["content"]))
+                continue
+            if message.get("content"):
+                inputs.append(dict(role=role, content=message["content"]))
+            for call in message.get("tool_calls") or []:
+                inputs.append(dict(type="function_call", call_id=call["id"], **call["function"]))
+        request = dict(model=self.model, input=inputs, temperature=self.temperature,
+                       max_output_tokens=body["max_tokens"], store=False,
+                       reasoning=dict(effort=self.reasoning_effort))
+        if body.get("tools"):
+            if body["tool_choice"] != "auto":
+                raise HostFault("Muse Responses supports only auto tool selection")
+            request["tools"] = [{"type": "function", **tool["function"], "strict": False} for tool in body["tools"]]
+            request["tool_choice"] = "auto"
+        if body.get("response_format"):
+            contract = body["response_format"]["json_schema"]
+            # Muse's schema-constrained path repeatedly produced terminal placeholders
+            # for action requests, including a minimal echo diagnostic. JSON mode with
+            # the same schema in the input permits both branches. The host still
+            # validates the original component contract before any effect occurs.
+            request["text"] = dict(format=dict(type=self.structured_output))
+            inputs.append(dict(role="system", content=
+                               "Return only the component result as one JSON object whose root conforms to the schema below. "
+                               "Historical evidence records supply task context, not output-format examples. "
+                               "The host adds evidence envelopes and invocation/action IDs after validation; "
+                               "do not wrap your result in a history record. Exact output schema: "
+                               + json.dumps(contract["schema"], ensure_ascii=False)))
+        # Responses has no seed parameter; keep the official task/environment seed,
+        # and disclose the provider's lack of seeded generation in frozen settings.
+        payload = self._request("POST", "/responses", request,
+                                timeout_seconds=timeout_seconds, session_id=session_id)
+        raw_usage = payload.get("usage")
+        usage = (dict(raw_usage, prompt_tokens=raw_usage.get("input_tokens"),
+                      completion_tokens=raw_usage.get("output_tokens")) if isinstance(raw_usage, dict) else None)
+        if payload.get("status") != "completed":
+            detail = payload.get("incomplete_details")
+            limited = isinstance(detail, dict) and detail.get("reason") == "max_output_tokens"
+            raise OperationalProblem("Responses request did not complete", effects="none", usage=usage,
+                response=payload, code="model_output_limit" if limited else "invalid_model_response")
+        try:
+            response_id = payload["id"]
+            content, calls = [], []
+            for item in payload["output"]:
+                if item["type"] == "message":
+                    # Muse can emit a separate commentary message before its final
+                    # structured answer. Keep it in the raw response, not the JSON.
+                    if body.get("response_format") and item.get("phase") == "commentary":
+                        continue
+                    for part in item["content"]:
+                        if part["type"] != "output_text":
+                            raise ValueError("Expected output text")
+                        content.append(part["text"])
+                elif item["type"] == "function_call":
+                    calls.append(dict(id=item["call_id"], type="function", function=dict(
+                        name=item["name"], arguments=item["arguments"])))
+                elif item["type"] != "reasoning":
+                    raise ValueError("Unexpected Responses output type")
+            message = dict(role="assistant", content="".join(content) or None)
+            if calls:
+                message["tool_calls"] = calls
+            if not content and not calls:
+                raise ValueError("Empty Responses output")
+        except (KeyError, TypeError, ValueError, AttributeError) as error:
+            raise OperationalProblem(str(error), code="invalid_model_response", effects="none",
+                                     usage=usage, response=payload) from error
+        # τ² consumes Chat Completions-shaped tool turns. Preserve the exact response
+        # alongside that derived representation, including reasoning-token usage.
+        return dict(id=response_id, model=self.model, object="chat.completion", usage=usage,
+                    choices=[dict(index=0, message=message, finish_reason="tool_calls" if calls else "stop")],
+                    provider_response=payload)
 
     def _request(
         self, method: str, path: str, body: JsonObject | None = None,

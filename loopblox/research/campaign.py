@@ -17,9 +17,9 @@ from loopblox.benchmarks.tau2 import Tau2Runner, load_suite
 from loopblox.research.session import RANKING_RULE, ResearchSession, validate_experiment
 from loopblox.research.codex import native_usage
 from loopblox.runtime.components import catalog
-from loopblox.runtime.controller import Limits, model_usage
+from loopblox.runtime.controller import Limits, model_usage, excluded_timeout_seconds
 from loopblox.runtime.io import atomic_json, atomic_text, digest, image_id
-from loopblox.runtime.model import ChatCompletionsClient, load_env
+from loopblox.runtime.model import ChatCompletionsClient, HostFault, load_env
 
 TASK_LIMITS = Limits(seconds=900, actions=60, model_calls=256, output_tokens=65536)
 
@@ -29,15 +29,27 @@ def read(path):
 
 
 def model_settings(client):
-    return {key: getattr(client, key) for key in ("model", "base_url", "temperature", "max_tokens", "timeout")}
+    return {key: getattr(client, key) for key in (
+        "model", "base_url", "api", "reasoning_effort", "structured_output", "temperature", "max_tokens", "timeout")}
+
+
+def evaluation_workers():
+    """Provider policy for new campaigns; freeze it before opening dispatch."""
+    load_env()
+    return 3 if os.environ.get("LOOPBLOX_PROVIDER", "freeinference") == "opencode_go" else 1
 
 
 def clients(protocol=None):
     client = ChatCompletionsClient.from_env()
     user = ChatCompletionsClient(client.api_key, client.base_url, client.model,
-                                 temperature=0, max_tokens=2048, timeout=client.timeout)
-    if protocol and (model_settings(client) != protocol["model"] or model_settings(user) != protocol["user_model"]):
-        raise ValueError("Model settings differ from the frozen campaign")
+                                 temperature=0, max_tokens=2048, timeout=client.timeout, api=client.api)
+    if protocol:
+        # Pre-Responses campaigns used only serial Chat Completions with JSON
+        # Schema; those fixed settings were implicit in their frozen sources.
+        defaults = dict(api="chat_completions", reasoning_effort=None, structured_output="json_schema")
+        for current, name in ((client, "model"), (user, "user_model")):
+            if model_settings(current) != {**defaults, **protocol[name]}:
+                raise ValueError("Model settings differ from the frozen campaign")
     return client, user
 
 
@@ -63,6 +75,74 @@ def development_tasks(suite, manifest):
     return development
 
 
+def recovery_task_budgets(attempts, limits, *, restart_candidate=None):
+    """Derive unfinished logical tasks' remaining caps from original attempts only."""
+    states = []
+    for attempt in attempts:
+        path = Path(attempt) / "research/private/state.json"
+        states.append(read(path) if path.exists() else {"evaluations": []})
+    tasks = {}
+    scopes = {}
+    # A failed recovery startup may have no state yet; it must not erase an
+    # earlier evaluation plan, its completed batches or its remaining budgets.
+    batches = {batch["evaluation_id"]: batch for state in states for batch in state["evaluations"]}
+    sources = {cid: source["sha256"] for batch in batches.values() for cid, source in batch["sources"].items()}
+    for batch in batches.values():
+        if batch.get("feedback_ready"):
+            continue
+        for index, row in enumerate(batch["runs"]):
+            source = batch["sources"][row["candidate_id"]]["sha256"]
+            key = (source, row["task_id"])
+            tasks[key] = dict(task_id=row["task_id"], source_sha256=source,
+                             spent=dict(seconds=0.0, actions=0, model_calls=0, output_tokens=0))
+            scopes[f"{batch['evaluation_id']}-{index}"] = key
+    def reset_spend(candidate):
+        if candidate not in sources:
+            raise ValueError(f"Unknown restart candidate: {candidate}")
+        for (source, _), task in tasks.items():
+            if source == sources[candidate]:
+                task["spent"] = dict(seconds=0.0, actions=0, model_calls=0, output_tokens=0)
+
+    for attempt, state in zip(attempts, states):
+        # An explicit restart begins a new allowance, not a new cumulative ledger.
+        # On later recovery, charge every attempt after that boundary normally.
+        restarted = read(Path(attempt) / "protocol.json").get("recovery", {}).get("restart_candidate")
+        if restarted:
+            reset_spend(restarted)
+        for batch in state["evaluations"]:
+            # Completed batches may have been copied into multiple attempts.
+            if batch.get("feedback_ready"):
+                continue
+            for row in batch["runs"]:
+                key = (batch["sources"][row["candidate_id"]]["sha256"], row["task_id"])
+                if key not in tasks or row["status"] == "not_started":
+                    continue
+                path = Path(attempt) / "research/public/evaluations" / batch["evaluation_id"] / row["directory"] / "result.json"
+                if not path.is_file():
+                    raise ValueError(f"Cannot recover without the original task accounting: {path}")
+                result = read(path)
+                if result["task_id"] != row["task_id"]:
+                    raise ValueError(f"Recovery task identity changed: {path}")
+                spend = dict(seconds=result["budget_seconds"], actions=result["actions"],
+                             model_calls=result["usage"]["model_calls"],
+                             output_tokens=result["usage"]["charged_output_tokens"])
+                for name, value in spend.items():
+                    tasks[key]["spent"][name] += value
+    if restart_candidate is not None:
+        if not any(source == sources.get(restart_candidate) for source, _ in tasks):
+            raise ValueError("Explicit restart requires a candidate in an unfinished evaluation")
+        reset_spend(restart_candidate)
+    for task in tasks.values():
+        task["limits"] = {name: None if cap is None else max(0, cap - task["spent"][name])
+                          for name, cap in limits.items()}
+        # Do not replenish an exhausted task or dispatch part of an inadmissible batch.
+        exhausted = [name for name, value in task["limits"].items() if value == 0]
+        if exhausted:
+            raise ValueError(f"Recovery budget exhausted for {task['task_id']}: {', '.join(exhausted)}")
+        Limits(**task["limits"])
+    return {scope: tasks[key] for scope, key in scopes.items()}
+
+
 def verify(root):
     root = Path(root).resolve()
     protocol = read(root / "protocol.json")
@@ -81,22 +161,37 @@ def verify(root):
     for name, expected in protocol.get("recovery", {}).get("imported_files", {}).items():
         if digest((root / name).read_bytes()) != expected:
             raise ValueError("Preserved recovery record changed: " + name)
+    if "task_budgets" in protocol.get("recovery", {}):
+        derived = recovery_task_budgets(sorted((root / "private/prior").glob("attempt-*")), protocol["task_limits"],
+                                       restart_candidate=protocol["recovery"].get("restart_candidate"))
+        if derived != protocol["recovery"]["task_budgets"]:
+            raise ValueError("Recovery task budgets differ from original accounting")
     return protocol
 
 
-def prepare(output, *, suite=None, worker_image="python:3.12-slim", previous=None, reason=None):
+def prepare(output, *, suite=None, worker_image="python:3.12-slim", previous=None, reason=None,
+            resume_stopped=False, restart_candidate=None):
     """Freeze a new attempt; recovery copies originals and starts a fresh researcher."""
     root = Path(output).resolve()
     previous = Path(previous).resolve() if previous else None
     old = verify(previous) if previous else None
+    if restart_candidate is not None and old is None:
+        raise ValueError("A candidate restart requires its previous campaign")
     if old:
         closed = read(previous / "result.json")
-        if (closed["status"] != "interrupted" or closed.get("research_status") == "user_stopped"
-                or (previous / "stop-request.json").exists()):
+        stop_path = previous / "stop-request.json"
+        stop = read(stop_path) if stop_path.exists() else {}
+        stopped = closed["status"] == "stopped" and closed.get("research_status") == "user_stopped"
+        failed = (closed["status"] == "interrupted" and closed.get("research_status") != "user_stopped"
+                  and (not stop_path.exists() or stop.get("reason") == "infrastructure_failure"))
+        if not (failed or (stopped and resume_stopped)):
             raise ValueError("Recovery requires a closed infrastructure failure, not a user stop or budget exhaustion")
         if not reason or not reason.strip():
             raise ValueError("Recovery requires a recorded diagnosis or repair reason")
         suite, worker_image = previous / "suite", old["worker_image"]
+        task_budgets = recovery_task_budgets(
+            [*sorted((previous / "private/prior").glob("attempt-*")), previous], old["task_limits"],
+            restart_candidate=restart_candidate)
     suite = Path(suite).resolve()
     manifest = load_suite(suite)
     tasks = development_tasks(suite, manifest)
@@ -106,6 +201,7 @@ def prepare(output, *, suite=None, worker_image="python:3.12-slim", previous=Non
     experiment = validate_experiment(read(ROOT / "experiments/tau2.json"))
     baseline = (ROOT / "controllers/reactive.py").read_text()
     if old and any((configuration != old["jev"], worker != old["worker_image"],
+                    evaluation_workers() != old.get("evaluation_workers", 1),
                     vars(TASK_LIMITS) != old["task_limits"], experiment != old["experiment"],
                     digest(baseline.encode()) != old["baseline_sha256"], catalog() != old["components"])):
         raise ValueError("Recovery must preserve tasks, limits, baseline, components, models and Jev configuration")
@@ -115,6 +211,7 @@ def prepare(output, *, suite=None, worker_image="python:3.12-slim", previous=Non
         task_ids=[task["task_id"] for task in tasks], worker_image=worker, task_limits=vars(TASK_LIMITS),
         research_budgets=dict(seconds=None, model_calls=None, output_tokens=None, task_runs=None),
         model=model_settings(client), user_model=model_settings(user), experiment=experiment,
+        evaluation_workers=evaluation_workers(),
         components=catalog(), baseline_sha256=digest(baseline.encode()), jev=configuration,
         ranking=RANKING_RULE, suite_manifest_sha256=digest((root / "suite/manifest.json").read_bytes()),
         implementation_sha256=snapshot_implementation(root))
@@ -133,6 +230,8 @@ def prepare(output, *, suite=None, worker_image="python:3.12-slim", previous=Non
             return {"__pycache__"}
         shutil.copytree(previous, attempt, ignore=ignore, symlinks=True)
         protocol["recovery"] = dict(previous=str(previous), reason=reason,
+            resumed_user_stop=stopped,
+            task_budgets=task_budgets,
             latest_attempt=str(attempt.relative_to(root)),
             not_before=closed.get("closed_at", 0) + (14 * 60 if "service_not_ready" in closed.get("failure_codes", []) else 0),
             implementation_changes={name: dict(previous=old["implementation_sha256"].get(name),
@@ -141,6 +240,8 @@ def prepare(output, *, suite=None, worker_image="python:3.12-slim", previous=Non
                 if old["implementation_sha256"].get(name) != protocol["implementation_sha256"].get(name)},
             imported_files={str(path.relative_to(root)): digest(path.read_bytes())
                             for path in prior.rglob("*") if path.is_file() and not path.is_symlink()})
+        if restart_candidate is not None:
+            protocol["recovery"]["restart_candidate"] = restart_candidate
         native_setup = attempt / "research/private/researcher-configuration.json"
         if old.get("expected_researcher"):
             protocol["expected_researcher"] = old["expected_researcher"]
@@ -162,14 +263,15 @@ def status(root):
     for attempt in [*sorted((root / "private/prior").glob("attempt-*")), root]:
         private = attempt / "research/private"
         ledger = private / "research-usage.json"
-        usage = read(ledger)["calls"] if ledger.exists() else []
+        usage_record = read(ledger) if ledger.exists() else {}
+        usage = usage_record.get("calls", [])
         calls.extend(usage)
         attempt_state = read(private / "state.json") if (private / "state.json").exists() else {}
         count = attempt_state.get("task_runs_used", 0)
         task_runs += count
         record = read(attempt / "result.json")
         elapsed = record.get("elapsed_seconds", max(0, time.time() - record["started_at"]) if record.get("started_at") else 0)
-        charged = max(0, elapsed - model_usage(usage)["timeout_wait_seconds"])
+        charged = max(0, elapsed - excluded_timeout_seconds(usage, usage_record.get("activities", [])))
         charged_seconds += charged
         attempts.append(dict(path=str(attempt), task_runs=count, charged_seconds=charged))
         path = private / "research-trace.json"
@@ -200,6 +302,20 @@ def write_report(root):
     return report
 
 
+def failure_codes(calls, evaluations, public):
+    """Derive campaign failures from transport attempts and authoritative task records."""
+    codes = {call["failure_code"] for call in calls if call.get("failure_code")}
+    for batch in evaluations:
+        for row in batch["runs"]:
+            codes.update(row[key] for key in ("code", "verification_error_code") if row.get(key))
+            trace = Path(public) / "evaluations" / batch["evaluation_id"] / row["directory"] / "trace.json"
+            if trace.is_file():
+                code = read(trace).get("code")
+                if code:
+                    codes.add(code)
+    return sorted(codes)
+
+
 def run(root):
     root = Path(root).resolve()
     protocol = verify(root)
@@ -222,6 +338,9 @@ def run(root):
     def check_stop():
         if (root / "stop-request.json").exists():
             signal.setitimer(signal.ITIMER_REAL, 0)
+            request = read(root / "stop-request.json")
+            if request.get("reason") == "infrastructure_failure":
+                raise HostFault("Operator interrupted for diagnosis: " + request["detail"])
             raise KeyboardInterrupt("user_stop")
     def interrupt(_signal, _frame):
         signal.setitimer(signal.ITIMER_REAL, 0)
@@ -237,10 +356,13 @@ def run(root):
             check_stop()
             time.sleep(max(0, min(1, wait_until - time.time())))
         client, user = clients(protocol)
+        if evaluation_workers() != protocol["evaluation_workers"]:
+            raise ValueError("Evaluation concurrency differs from the frozen campaign")
         manifest = load_suite(root / "suite")
         development = development_tasks(root / "suite", manifest)
         runner = Tau2Runner(root / "suite", {**manifest, "tasks": development}, client, user,
-            protocol["worker_image"], Limits(**protocol["task_limits"]), root / "private/environments")
+            protocol["worker_image"], Limits(**protocol["task_limits"]), root / "private/environments",
+            recovery_tasks=protocol.get("recovery", {}).get("task_budgets", {}))
         accounting = status(root)
         session = ResearchSession(output=root / "research", development=tuple(protocol["task_ids"]), run_task=runner,
             worker_image=protocol["worker_image"], setup=dict(model=protocol["model"], user_model=protocol["user_model"],
@@ -249,14 +371,17 @@ def run(root):
                     charged_seconds=sum(row["charged_seconds"] for row in accounting["attempts"][:-1]))),
             experiment=protocol["experiment"],
             baseline_source=(ROOT / "controllers/reactive.py").read_text(), task_limits=Limits(**protocol["task_limits"]),
-            check_stop=check_stop)
+            check_stop=check_stop, evaluation_workers=protocol["evaluation_workers"])
         if session.jev_configuration != protocol["jev"]:
             raise ValueError("Jev configuration changed after freezing")
         recovery = protocol.get("recovery")
         if recovery:
-            prior_session = root / recovery["latest_attempt"] / "research"
-            if (prior_session / "private/state.json").exists():
-                session.restore(prior_session)
+            for attempt in reversed(sorted((root / "private/prior").glob("attempt-*"))):
+                prior_session = attempt / "research"
+                state_path = prior_session / "private/state.json"
+                if state_path.exists() and read(state_path)["evaluations"]:
+                    session.restore(prior_session)
+                    break
         session.research()
         result.update(status=session.state["status"], research_status=session.state.get("research_status"))
     except KeyboardInterrupt:
@@ -272,7 +397,8 @@ def run(root):
         signal.signal(signal.SIGALRM, previous_alarm)
         calls = session.meter.calls if session and hasattr(session, "meter") else []
         result.update(closed_at=time.time(), elapsed_seconds=time.monotonic() - started,
-                      failure_codes=sorted({call["failure_code"] for call in calls if call.get("failure_code")}))
+                      failure_codes=failure_codes(calls, session.state["evaluations"] if session else [],
+                                                  root / "research/public"))
         atomic_json(root / "result.json", result)
         write_report(root)
     return result

@@ -217,7 +217,8 @@ dispatch, while retaining all deterministic official scoring requirements.
    they cannot be evaluated again. The researcher may inspect records, revise
    hypotheses and write notes freely inside this candidate allowance.
 4. Freeze every new source and evaluate it once on all ten tasks with fresh
-   workers, the same task order and the same limits. Rotate execution order when
+   workers, the same task admission order and the same limits. Freeze provider-specific
+   evaluation concurrency under experiment.md; completion order does not reorder records. Rotate admission order when
    two candidates share a batch. Preserve failures, interruptions, missing scores
    and all spend. Complete mandatory Jev analysis before releasing batch feedback.
 5. The host selects by official passes, agent input tokens, then agent model calls,
@@ -248,7 +249,9 @@ accounting apply. Freeze command limits in `research-workspace.json`; scratch ha
 no filesystem quota. Analysis outputs and scratch remain researcher claims and are
 not automatically exported as lineage experience. Evaluation receipts and initial
 guides provide compact navigation; complete public evidence stays on disk.
-Research analysis and host evaluation run serially. Close each analysis container,
+Researcher analysis and host evaluation requests run serially. Within an evaluation,
+independent task/scoring/Jev lanes use the concurrency frozen by experiment.md.
+Close each researcher analysis container,
 including its background processes, before executing the next host request.
 For native Codex research, each CLI invocation reads only approved public materials
 and its own prior work, then exits with a request. The host validates and executes

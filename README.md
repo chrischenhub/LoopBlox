@@ -40,7 +40,7 @@ cp .env.example .env
 
 ### 1. Set up the services
 
-Research uses three services. Codex edits Loops through your ChatGPT subscription. FreeInference runs the task agent and simulated user. Jev analyzes their task traces.
+Research uses three services. Codex edits Loops through your ChatGPT subscription. FreeInference or OpenCode Go runs the task agent and simulated user. Jev analyzes their task traces.
 
 Follow the [installation guide](docs/running.md#install-the-host-dependencies) to install the benchmark environment, Jev SDK, and pinned Linux Codex distribution, then sign in to ChatGPT. Copy the two path assignments printed by setup into `.env` and set `FREEINFERENCE_API_KEY` and `TYPESAFE_API_KEY`. Paths must be absolute; `.env` does not expand `$HOME` or `$PWD`.
 
@@ -99,7 +99,19 @@ research-NEW/
 
 ## Visualize your experiment
 
-Generate a standalone HTML report from a running or completed campaign:
+Start the live dashboard from the repository root:
+
+```sh
+python3 -B -m loopblox.research.dashboard
+```
+
+Open [http://127.0.0.1:8767/](http://127.0.0.1:8767/). It refreshes every three seconds, detects live campaigns under `.artifacts/tau2/`, and follows the newest confirmed live experiment. When none is detected, it says so and shows the latest recorded campaign. The page combines live task progress, official scores, Jev analysis and usage with the generic Loop visualizer: candidate comparisons, Python source and differences, and actual execution paths. Select one task to compare across all Loops, or select a campaign to keep watching that attempt. The dashboard reads existing records without making model calls or changing the experiment. See the [live dashboard guide](docs/running.md#live-research-dashboard) for options and accounting.
+
+The **Research** tab summarizes the selected campaign's candidate evolution,
+recorded findings and research notes, including post-run Jev coverage and optional
+online Judge use. The main **Dashboard** tab keeps live progress and Loop exploration.
+
+For a standalone HTML report from a running or completed campaign:
 
 ```sh
 python3 -B -m loopblox.research.visualize .artifacts/tau2/research-NEW \

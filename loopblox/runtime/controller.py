@@ -11,6 +11,10 @@ import selectors
 import subprocess
 import time
 import uuid
+from contextlib import contextmanager
+from contextvars import ContextVar
+from functools import wraps
+from threading import RLock
 from dataclasses import asdict, dataclass
 from pathlib import Path
 from typing import Any
@@ -24,7 +28,7 @@ from loopblox.runtime.model import (
     BudgetExhausted, HostFault, OperationalProblem, PlanningTurn, Tool, ToolResult,
     _PROVIDER_STOP_CODES, _TRANSIENT_CODES, usage_tokens,
 )
-from loopblox.runtime.io import atomic_json, run_process
+from loopblox.runtime.io import atomic_json, run_process, cancellation_scope, check_cancelled, wait_seconds, cancel_dispatch
 from loopblox.report import write_trace_report
 
 
@@ -76,6 +80,44 @@ def _public_remaining(remaining):
     return {key: None if value == math.inf else value for key, value in remaining.items()}
 
 
+_activity = ContextVar("model_activity", default=None)
+
+
+def excluded_timeout_seconds(calls, activities=()):
+    """Exclude wall time only when every active pipeline job is waiting on timeouts."""
+    events = []
+    legacy = 0
+    for call in calls:
+        if "timeout_intervals" not in call:
+            legacy += call.get("timeout_wait_seconds", 0)
+        for start, end in call.get("timeout_intervals", []):
+            events.extend([(start, "waiting", call.get("activity"), 1),
+                           (end, "waiting", call.get("activity"), -1)])
+    if not events:
+        return legacy
+    for activity in activities:
+        events.extend([(activity["start"], "active", activity["scope"], 1),
+                       (activity.get("end", time.monotonic()), "active", activity["scope"], -1)])
+    active, waiting, previous, excluded = {}, {}, 0, legacy
+    for at, kind, scope, delta in sorted(events, key=lambda item: item[0]):
+        if waiting and all(waiting.get(scope, 0) for scope in active):
+            excluded += at - previous
+        counts = active if kind == "active" else waiting
+        counts[scope] = counts.get(scope, 0) + delta
+        if counts[scope] == 0:
+            del counts[scope]
+        previous = at
+    return excluded
+
+
+def _meter_locked(method):
+    @wraps(method)
+    def locked(self, *args, **kwargs):
+        with self.lock:
+            return method(self, *args, **kwargs)
+    return locked
+
+
 class ModelMeter:
     """One owner for the shared research budget, including nested task model calls."""
 
@@ -84,21 +126,51 @@ class ModelMeter:
             raise ValueError("Research limits must be positive")
         self.path = path
         self.parent = parent
+        self.lock = parent.lock if parent is not None else RLock()
         self.started = time.monotonic()
         self.limits = dict(seconds=seconds, output_tokens=output_tokens, model_calls=model_calls)
         self.calls: list[dict] = []
+        self.activities: list[dict] = []
         self.save()
 
     @property
+    @_meter_locked
     def timeout_wait_seconds(self):
-        return sum(call.get("timeout_wait_seconds", 0) for call in self.calls)
+        return excluded_timeout_seconds(self.calls, self.activities)
+
+    @contextmanager
+    def activity(self, scope):
+        record = dict(scope=scope, start=time.monotonic())
+        with self.lock:
+            self.activities.append(record)
+            self.save()
+        token = _activity.set(scope)
+        try:
+            yield
+        finally:
+            _activity.reset(token)
+            with self.lock:
+                record["end"] = time.monotonic()
+                self.save()
+
+    @_meter_locked
+    def exclude_timeout(self, call, start, end):
+        call.setdefault("timeout_intervals", []).append([start, end])
+        call["timeout_wait_seconds"] = call.get("timeout_wait_seconds", 0) + end - start
+        owner = self
+        while owner is not None:
+            owner.save()
+            owner = owner.parent
 
     @property
     def deadline(self):
-        deadline = self.started + _available(self.limits["seconds"]) + self.timeout_wait_seconds
+        deadline = (math.inf if self.limits["seconds"] is None else
+                    self.started + self.limits["seconds"] + self.timeout_wait_seconds)
         return min(deadline, self.parent.deadline) if self.parent is not None else deadline
 
+    @_meter_locked
     def remaining(self):
+        check_cancelled()
         remaining = {
             "seconds": max(0, self.deadline - time.monotonic()),
             "model_calls": _available(self.limits["model_calls"], len(self.calls)),
@@ -110,6 +182,7 @@ class ModelMeter:
             remaining = {key: min(value, parent[key]) for key, value in remaining.items()}
         return remaining
 
+    @_meter_locked
     def start(self, scope: str, requested: int, request: dict):
         # The shared ledger owns session-wide provider failures, including user calls.
         # Refusing a later dispatch is not another model attempt and is not charged.
@@ -123,13 +196,14 @@ class ModelMeter:
         if requested <= 0 or requested > remaining["output_tokens"]:
             raise BudgetExhausted("research_output_token_limit")
         call = (self.parent.start(scope, requested, request) if self.parent is not None else
-                dict(scope=scope, status="started", requested_output_tokens=requested,
+                dict(scope=scope, activity=_activity.get(), status="started", requested_output_tokens=requested,
                      charged_output_tokens=requested, usage=None, elapsed_seconds=None,
                      request=copy.deepcopy(request)))
         self.calls.append(call)
         self.save()  # Reserve before dispatch: an interrupted request is not free.
         return call
 
+    @_meter_locked
     def finish(self, call, *, usage, status, elapsed):
         if self.parent is not None:
             self.parent.finish(call, usage=usage, status=status, elapsed=elapsed)
@@ -139,9 +213,11 @@ class ModelMeter:
                         charged_output_tokens=call["requested_output_tokens"] if reported is None else reported)
         self.save()
 
+    @_meter_locked
     def save(self):
-        atomic_json(self.path, {"limits": self.limits, "calls": self.calls})
+        atomic_json(self.path, {"limits": self.limits, "calls": self.calls, "activities": self.activities})
 
+    @_meter_locked
     def summary(self):
         return model_usage(self.calls)
 
@@ -164,7 +240,8 @@ def model_call(*, meter, scope, request, max_tokens, remaining, invoke, time_ori
             if failure is not None:
                 raise failure from None
             raise
-        call["start_seconds"] = time.monotonic() - time_origin
+        with meter.lock:
+            call["start_seconds"] = time.monotonic() - time_origin
         if record_attempt is not None:
             record_attempt(call)
         started, usage, failure = time.monotonic(), None, None
@@ -176,24 +253,27 @@ def model_call(*, meter, scope, request, max_tokens, remaining, invoke, time_ori
             usage, status = turn.usage, "returned"
         except BudgetExhausted as error:
             status = "budget_exhausted"
-            call.update(failure_code="time_limit", failure=str(error))
+            with meter.lock:
+                call.update(failure_code="time_limit", failure=str(error))
             raise
         except (OperationalProblem, HostFault) as error:
             usage, failure, status = error.usage, error, "failed"
-            call.update(failure_code=getattr(error, "code", "host_fault"), failure=str(error))
-            if error.response is not None:
-                # Keep failed provider output with its existing attempt and privacy scope.
-                call["response"] = copy.deepcopy(error.response)
+            with meter.lock:
+                call.update(failure_code=getattr(error, "code", "host_fault"), failure=str(error))
+                if error.response is not None:
+                    # Keep failed provider output with its existing attempt and privacy scope.
+                    call["response"] = copy.deepcopy(error.response)
             if (isinstance(error, OperationalProblem) and error.code == "model_output_limit"
                     and usage_tokens(usage, "completion_tokens") == allowance == available["output_tokens"]):
                 status = "budget_exhausted"
                 raise BudgetExhausted("output_token_limit") from error
         finally:
-            call["end_seconds"] = time.monotonic() - time_origin
+            with meter.lock:
+                call["end_seconds"] = time.monotonic() - time_origin
             elapsed = time.monotonic() - started
             if (isinstance(failure, OperationalProblem) and failure.code == "model_timeout"
                     and failure.effects == "none"):
-                call["timeout_wait_seconds"] = elapsed
+                meter.exclude_timeout(call, started, started + elapsed)
             meter.finish(call, usage=usage, status=status, elapsed=elapsed)
         if failure is None:
             if remaining()["seconds"] <= 0:
@@ -209,14 +289,10 @@ def model_call(*, meter, scope, request, max_tokens, remaining, invoke, time_ori
                 raise failure
             waiting = time.monotonic()
             try:
-                time.sleep(delay)
+                wait_seconds(delay)
             finally:
                 if failure.code == "model_timeout":
-                    call["timeout_wait_seconds"] += time.monotonic() - waiting
-                    owner = meter
-                    while owner is not None:
-                        owner.save()
-                        owner = owner.parent
+                    meter.exclude_timeout(call, waiting, time.monotonic())
             if failure.code not in {"model_timeout", "concurrency_limit_exceeded"}:
                 transient_retry_used = True
             continue
@@ -470,8 +546,16 @@ class ControllerRuntime:
                          "Evidence IDs identify stored originals; the active component defines this call's behavior."},
                         {"role": "user", "content": json.dumps(dict(id="task", **self.history[0]), ensure_ascii=False)}]
             for evidence in self.evidence(indices):
-                messages.append({"role": "assistant" if evidence["type"] == "model_turn" else "user",
-                                 "content": json.dumps(evidence, ensure_ascii=False)})
+                if evidence["type"] == "model_turn":
+                    # Replay only the original model output as the assistant turn.
+                    # Host metadata identifies it without changing its output format.
+                    output = evidence.pop("value")
+                    messages.append({"role": "user", "content":
+                                     "Host metadata for the following historical model output:\n"
+                                     + json.dumps(evidence, ensure_ascii=False)})
+                    messages.append({"role": "assistant", "content": json.dumps(output, ensure_ascii=False)})
+                else:
+                    messages.append({"role": "user", "content": json.dumps(evidence, ensure_ascii=False)})
             request = dict(component=name, instruction=spec["prompt"], capabilities=capabilities,
                            remaining=_public_remaining(self.remaining()))
             if scope is not None:
@@ -731,8 +815,10 @@ class ControllerRuntime:
         except BudgetExhausted as error:
             self.record.update(status="budget_exhausted", stop_reason=str(error))
         except OperationalProblem as error:
+            cancel_dispatch()
             self.record.update(status="operational_failure", stop_reason=str(error), code=getattr(error, "code", None))
         except HostFault as error:
+            cancel_dispatch()
             self.record.update(status="host_fault", stop_reason=str(error))
         except (CandidateError, ValueError, BrokenPipeError) as error:
             self.record.update(status="candidate_error", stop_reason=str(error))
@@ -741,7 +827,8 @@ class ControllerRuntime:
             raise
         finally:
             try:
-                run_process(["docker", "rm", "-f", name], timeout=10, capture_output=True)
+                with cancellation_scope(None):
+                    run_process(["docker", "rm", "-f", name], timeout=10, capture_output=True)
             except Exception as error:
                 self.record.update(status="operational_failure", cleanup_error=str(error))
             finally:

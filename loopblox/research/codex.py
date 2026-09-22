@@ -252,13 +252,16 @@ class CodexResearcher:
                     if process.poll() is None:
                         process.kill()
                     process.wait(timeout=10)
-        usage, failure, observed_session = None, None, None
+        usage, observed_session = None, None
+        failure = dict(type="error", message="Native CLI exited without turn.completed")
         for line in (directory / "events.jsonl").read_text().splitlines():
             event = json.loads(line)
             if event.get("type") == "thread.started":
                 observed_session = event.get("thread_id")
             elif event.get("type") == "turn.completed":
                 usage = event.get("usage")
+                # Successful completion supersedes transient reconnect errors retained in events.jsonl.
+                failure = None
             elif event.get("type") in {"error", "turn.failed"}:
                 failure = event
         return dict(exit_code=process.returncode, usage=usage, failure=failure, session_id=observed_session)

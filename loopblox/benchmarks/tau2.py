@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from contextvars import ContextVar
+
 from collections import Counter, defaultdict
 import importlib.metadata
 import json
@@ -19,7 +21,7 @@ import uuid
 from loopblox.runtime.components import object_schema
 from loopblox.runtime.controller import ControllerRuntime, Limits, ModelMeter, model_call, model_usage
 from loopblox.runtime.model import BudgetExhausted, HostFault, OperationalProblem, Tool, ToolResult, usage_tokens
-from loopblox.runtime.io import atomic_json, atomic_text, digest
+from loopblox.runtime.io import atomic_json, atomic_text, digest, cancel_dispatch
 from loopblox.report import write_trace_report
 
 
@@ -216,10 +218,13 @@ def load_suite(path):
     return manifest
 
 
+_task_completion = ContextVar("tau2_task_completion")
+
+
 class Tau2Runner:
     """Fresh official environment/user per task; all candidate code stays in the isolated worker."""
 
-    def __init__(self, suite, manifest, client, user_client, worker_image, limits, private):
+    def __init__(self, suite, manifest, client, user_client, worker_image, limits, private, *, recovery_tasks=None):
         self.suite, self.manifest = Path(suite).resolve(), manifest
         versions = json.loads((self.suite / "versions.json").read_text())
         installed = {d.metadata["Name"]: d.version for d in importlib.metadata.distributions()}
@@ -228,9 +233,21 @@ class Tau2Runner:
         self.tasks = {task["task_id"]: task for task in manifest["tasks"]}
         self.client, self.user_client, self.worker_image, self.limits = client, user_client, worker_image, limits
         self.private = Path(private)
+        self.recovery_tasks = recovery_tasks or {}
         configure(self.suite / "upstream", self.suite / "upstream/data")
+        from tau2.utils import llm_utils
+        # Install once, before dispatch. Each thread resolves its own environment's
+        # transport; no task ever replaces another task's module-global callback.
+        llm_utils.completion = lambda **kwargs: _task_completion.get()(**kwargs)
+        llm_utils.get_response_cost = lambda response: None
 
     def __call__(self, *, task_id, source, scope, directory, meter, exposed):
+        limits = self.limits
+        prior = self.recovery_tasks.get(scope)
+        if prior is not None:
+            if prior["task_id"] != task_id or prior["source_sha256"] != digest(source.encode()):
+                raise HostFault("Recovery task/source differs from its budget accounting")
+            limits = Limits(**prior["limits"])
         from litellm import ModelResponse
         from tau2.agent.base_agent import HalfDuplexAgent
         from tau2.data_model.message import AssistantMessage, ToolCall, ToolMessage, UserMessage
@@ -240,7 +257,6 @@ class Tau2Runner:
         from tau2.orchestrator.orchestrator import Orchestrator, Role
         from tau2.registry import registry
         from tau2.user.user_simulator import UserSimulator
-        from tau2.utils import llm_utils
         from tau2.utils.utils import get_now
 
         class ExternalAgent(HalfDuplexAgent):
@@ -267,13 +283,11 @@ class Tau2Runner:
         directory.mkdir(parents=True, exist_ok=False)
         atomic_text(directory / "controller.py", source)
         private = self.private / uuid.uuid4().hex
-        task_meter = ModelMeter(private / "usage.json", parent=meter, seconds=self.limits.seconds,
-                                model_calls=self.limits.model_calls, output_tokens=self.limits.output_tokens)
+        task_meter = ModelMeter(private / "usage.json", parent=meter, seconds=limits.seconds,
+                                model_calls=limits.model_calls, output_tokens=limits.output_tokens)
         started, runtime, orchestrator = time.monotonic(), None, None
         environment_error, grading = None, False
         row = dict(task_id=task_id, family=selected["family"], status="running", verification_verdict=None)
-        original_completion = llm_utils.completion
-        original_cost = llm_utils.get_response_cost
 
         def completion(**kwargs):
             owner = runtime.active_component_id if runtime and not grading else None
@@ -288,8 +302,9 @@ class Tau2Runner:
                     seed=kwargs.get("seed"), max_output_tokens=allowance, timeout_seconds=self.user_client.timeout,
                     session_id=private.name + ":" + role),
             )
-            call["response"] = turn.raw
-            task_meter.save()
+            with task_meter.lock:
+                call["response"] = turn.raw
+                task_meter.save()
             if (usage_tokens(turn.usage, "completion_tokens") or 0) > call["requested_output_tokens"]:
                 raise HostFault("Simulated user exceeded its requested output allowance", usage=turn.usage)
             return ModelResponse(**turn.raw)
@@ -339,12 +354,10 @@ class Tau2Runner:
             return ToolResult("failed" if failed else "ok", value,
                               "applied" if before != after or name == "respond_to_user" else "none")
 
+        completion_token = _task_completion.set(completion)
         try:
             # Retain the official prompts, message conversion and user-tool behavior.
             # Only provider transport is replaced; the host owns retries and every charge.
-            llm_utils.completion = completion
-            # The configured endpoint has no frozen dollar-price table. Unknown is not zero.
-            llm_utils.get_response_cost = lambda response: None
             environment = registry.get_env_constructor(selected["family"])()
             agent = ExternalAgent(environment.get_tools(), environment.get_policy())
             user = UserSimulator(tools=environment.get_user_tools(include=task.user_tools) if environment.user_tools else None,
@@ -354,7 +367,7 @@ class Tau2Runner:
                                         task=task, seed=selected["seed"],
                                         # The pinned upstream only compares this internal value;
                                         # persisted limits retain None rather than JSON Infinity.
-                                        max_steps=math.inf if self.limits.actions is None else self.limits.actions * 8,
+                                        max_steps=math.inf if limits.actions is None else limits.actions * 8,
                                         # The host meter owns charged time, including excluded
                                         # no-effect model timeout waits. Upstream uses wall time.
                                         timeout=None)
@@ -387,7 +400,7 @@ class Tau2Runner:
                               lambda arguments, timeout: act("respond_to_user", arguments, timeout),
                               preserve_observation_fields=("conversation_done",)))
             runtime = ControllerRuntime(task=disclosed, tools=tuple(tools), client=self.client, meter=task_meter,
-                                        limits=self.limits, trace_path=directory / "trace.json", scope=scope,
+                                        limits=limits, trace_path=directory / "trace.json", scope=scope,
                                         image=self.worker_image, exposed=exposed)
             if initialization_exhaustion is None:
                 record = runtime.run(source)
@@ -435,17 +448,18 @@ class Tau2Runner:
                 if isinstance(error, BudgetExhausted):
                     row.update(verification_error_code="budget_exhausted", verification_stop_reason=str(error))
         except OperationalProblem as error:
+            cancel_dispatch()
             atomic_json(private / "initialization-error.json", dict(type=type(error).__name__, detail=str(error)))
             row.update(status="operational_failure", stop_reason=error.code)
         except Exception as error:
+            cancel_dispatch()
             atomic_json(private / "initialization-error.json", dict(type=type(error).__name__, detail=str(error)))
             row.update(status="host_fault", stop_reason="tau2_host_failed")
         except BaseException:
             row.update(status="interrupted", stop_reason="host_interrupted")
             raise
         finally:
-            llm_utils.completion = original_completion
-            llm_utils.get_response_cost = original_cost
+            _task_completion.reset(completion_token)
             if orchestrator is not None:
                 # Keep partial official trajectories after failures; no Python continuation resumes.
                 atomic_json(private / "trajectory.json", [message.model_dump(mode="json") for message in orchestrator.trajectory])

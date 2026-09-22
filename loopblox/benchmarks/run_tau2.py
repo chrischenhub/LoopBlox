@@ -27,10 +27,17 @@ def main():
     recover.add_argument("--previous", type=Path, required=True)
     recover.add_argument("--output", type=Path, required=True)
     recover.add_argument("--reason", required=True, help="Diagnosis, new evidence or repair justifying recovery")
+    recover.add_argument("--resume-stopped", action="store_true",
+                         help="Use only after an explicit user request to resume a stopped campaign; retain all prior spend")
+    recover.add_argument("--restart-candidate",
+                         help="Explicitly authorized full-budget restart of one unfinished candidate; retain historical spend")
     for name, help_text in (("status", "Show current results and cumulative usage"),
                             ("stop", "Interrupt research and retain task cleanup and accounting")):
         command = commands.add_parser(name, help=help_text)
         command.add_argument("--output", type=Path, required=True)
+        if name == "stop":
+            command.add_argument("--diagnostic-reason",
+                                 help="Close an infrastructure fault for diagnosis; ordinary stop remains a user pause")
     args = parser.parse_args()
     if args.command == "prepare":
         manifest = prepare_telecom_suite(args.output, source=args.source, seed=args.seed,
@@ -38,7 +45,8 @@ def main():
         print(json.dumps({"tasks": len(manifest["tasks"]), "manifest": str(Path(args.output) / "manifest.json")}))
     elif args.command in {"run", "recover"}:
         options = (dict(suite=args.suite, worker_image=args.worker_image) if args.command == "run" else
-                   dict(previous=args.previous, reason=args.reason))
+                   dict(previous=args.previous, reason=args.reason, resume_stopped=args.resume_stopped,
+                        restart_candidate=args.restart_candidate))
         root = campaign.prepare(args.output, **options)
         raise SystemExit(campaign.dispatch(root))
     elif args.command == "status":
@@ -48,7 +56,15 @@ def main():
         state = campaign.read(root / "result.json")
         if state["status"] not in {"prepared", "researching"}:
             parser.error("This campaign is already closed")
-        atomic_json(root / "stop-request.json", dict(reason="user_stop"))
+        request = dict(reason="user_stop")
+        if args.diagnostic_reason is not None:
+            if not args.diagnostic_reason.strip():
+                parser.error("A diagnostic stop requires a nonempty reason")
+            existing = root / "stop-request.json"
+            if existing.exists():
+                parser.error("A diagnostic stop cannot replace an existing stop request")
+            request = dict(reason="infrastructure_failure", detail=args.diagnostic_reason)
+        atomic_json(root / "stop-request.json", request)
         print("Stop requested; the host will interrupt research and retain task cleanup and accounting.")
 
 

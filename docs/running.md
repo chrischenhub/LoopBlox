@@ -59,10 +59,27 @@ setup for standalone task runs and the local playground. See
 
 To use OpenCode Go, set `LOOPBLOX_PROVIDER=opencode_go` and `OPENCODE_GO_API_KEY`
 in `.env` or the process environment. Its defaults are
-`https://opencode.ai/zen/go/v1` and `glm-5.1`; [.env.example](../.env.example)
-lists optional overrides. Choose a model with a Chat Completions endpoint from
-the [Go documentation](https://opencode.ai/docs/go/#endpoints).
-The default provider is `freeinference`.
+`https://opencode.ai/zen/go/v1` and `muse-spark-1.3-contributor`;
+[.env.example](../.env.example) lists optional overrides. This Muse model uses
+Responses with high reasoning effort. Component outputs use JSON mode plus the
+canonical schema in a fixed format instruction; host schema validation remains
+mandatory before execution. This mode avoids the terminal-placeholder behavior
+observed with Muse's schema-constrained output path. The transport mode is frozen
+with the model settings and requires a fresh baseline when changed.
+Simulator calls use native tools (`auto` selection, as used by τ²).
+Other configured models retain Chat Completions transport;
+check the [Go endpoints](https://opencode.ai/docs/go/#endpoints) before selecting one.
+Responses has no generation seed parameter. Official environment seeds remain
+frozen, but simulator generations on this API are not seeded.
+
+New OpenCode campaigns freeze **three concurrent evaluation lanes**; FreeInference
+freezes **one**. Each lane runs a fresh task, official scoring and mandatory Jev
+analysis. Batch feedback is released only after every lane completes. The provider
+policy is owned by `campaign.evaluation_workers`; it is not a claim about the
+provider's maximum concurrency. Two overlapping Muse requests succeeded in the
+September 22, 2026 local probe; the Go docs do not publish a concurrency ceiling.
+The default provider remains `freeinference`. Changing the provider/model requires
+a fresh campaign and a new baseline, not recovery of an existing campaign.
 
 ## Native Codex researcher
 
@@ -198,6 +215,12 @@ python3 -B -m loopblox.benchmarks.run_tau2 stop --output .artifacts/tau2/researc
 Use a new output directory. Ctrl-C also requests a stop and waits for cleanup.
 Use a second terminal for `status` or `stop` while `run` is active.
 
+For an infrastructure fault requiring diagnosis, add `--diagnostic-reason` with
+a concrete explanation to the stop command. This retains worker cleanup and
+records an infrastructure failure eligible for recovery. Plain `stop` and Ctrl-C
+remain user pauses and cannot be automatically recovered. A diagnostic request
+cannot replace an existing stop request.
+
 After diagnosing a failure, check the
 [recovery conditions](../experiment.md#stopping-and-recovery), then recover into
 a new directory with the diagnosis or repair recorded in `--reason`:
@@ -211,6 +234,16 @@ a new directory with the diagnosis or repair recorded in `--reason`:
 
 `recover` starts the new attempt in the foreground. Its eligibility checks,
 waiting conditions, retained evidence and accounting follow the linked protocol.
+Only after the user explicitly requests resumption, add `--resume-stopped` to
+recover a stopped campaign, recording the request in `--reason`. This preserves
+the original stop record and all budget deductions; it does not resume an old
+worker or reset its allowance.
+
+Only when the user explicitly authorizes a complete, full-budget restart of an
+unfinished candidate, add `--restart-candidate c0006` and record that authorization
+in `--reason`. This restarts all that candidate's tasks with the original per-task
+caps while preserving completed batches and all historical spend. Subsequent
+ordinary recovery deducts attempts since this restart; it does not reset again.
 
 ## Inspect campaign outputs
 
@@ -227,7 +260,82 @@ refresh the derived report and usage summary.
 | `research/public/checkpoints/` | Completed iteration records and notes. |
 | `research/public/evaluations/` | Batch results, task traces and Jev evidence. |
 
+New campaign implementations retain the full provider response in each structured
+model turn's `raw` field, including the response ID, reported model and finish
+reason when supplied. The parsed component value remains in `output`. A returned
+request can still fail component validation: `result.json` aggregates failure codes
+from gateway attempts and task records without changing request usage or status.
+Historical frozen campaigns retain their original recording behavior.
+
+Assistant history replays only the original parsed model output. Host metadata
+(including invocation IDs, component and scope) is supplied separately as a user
+message identifying the following historical output; it is not an assistant turn.
+
 ## Component catalog and execution reports
+
+### Live research dashboard
+
+Run this from the current repository checkout in a separate terminal:
+
+```sh
+python3 -B -m loopblox.research.dashboard
+
+# Monitor one campaign, or provide another directory of campaigns
+python3 -B -m loopblox.research.dashboard .artifacts/tau2/research-NEW --port 8767
+```
+
+Open [http://127.0.0.1:8767/](http://127.0.0.1:8767/). The local server needs only
+Python's standard library. Keep its terminal open; Ctrl-C closes the dashboard
+independently of the experiment. It binds only to the local computer and has no
+experiment controls or model calls. Frozen campaigns are never modified.
+The dashboard follows the website's ink-green palette and pixel typography, using
+the tracked LoopBlox logo and bundled fonts. These assets are served locally from
+the repository; the monitor does not depend on `site/` or remote font services.
+
+The default directory is `.artifacts/tau2/`. **Follow live experiment** detects
+unclosed continuous telecom campaigns whose recorded local PID still belongs to
+the matching campaign host. It follows the newest confirmed live attempt,
+including newly created recovery directories. A newer stopped or prepared campaign
+does not displace a live one. When no live host is detected, the page says so and
+shows the latest recorded campaign. Process presence confirms liveness, not progress.
+Choose a specific attempt in the selector to keep it fixed. Other historical
+protocols are excluded. **Explore Loops** jumps to the integrated **Loop evolution**
+section on the same page. It uses the generic visualizer's candidate comparisons,
+source validation and recorded execution diagrams. Choose a task to compare the
+same task across every Loop, then expand Python source, source changes, exact path
+order or task outcomes. The task selection stays fixed while that campaign updates;
+switching campaigns resets it to the first recorded task. Open disclosures and
+diagram scroll positions survive refreshes. Standalone HTML export remains
+available with the visualization command below.
+
+**Dashboard** is the home page. The **Research** tab at `/research` summarizes the
+selected campaign's research question, candidate history, recorded outcomes and
+research notebook. Both tabs retain the campaign selection and follow-live mode.
+The Research page distinguishes mandatory post-run Jev analysis from optional
+online `judge` invocations, and shows analysis coverage alongside the researcher's
+recorded evidence references. Notes and hypotheses remain attributed researcher
+claims; Jev measurements do not replace official scores or establish why a change
+worked. Its history covers the public records in the selected campaign, including
+inherited completed evaluations, while cumulative usage still includes prior
+recovery attempts. The page summarizes existing evidence without additional model
+calls.
+
+The page refreshes every three seconds. Connection status means the monitor is
+reachable; campaign state and the recorded local host process are shown separately.
+Last recorded activity is a file timestamp, not a heartbeat or proof of progress.
+A completed trace without a task result is shown as scoring / cleanup; those stages
+cannot be separated from the available records. Task completion, official scoring
+and mandatory Jev completion have separate counts. Incomplete or interrupted
+batches retain their missing scores and never qualify as evaluated.
+
+Candidate comparisons use the recorded agent usage and host-selected incumbent.
+Campaign usage reuses `campaign.status()` to include failed recovery attempts once,
+with wall time separate from charged time and native researcher usage separate from
+gateway usage. Missing token measurements remain unknown. The server projects
+only aggregate accounting from private ledgers; it never serves their request
+bodies, simulator data or credentials. It reads records directly rather than the
+on-demand `status.json` report. Files are read individually, so a refresh can span
+a host transition; a read error keeps the last successful view with a warning.
 
 ### Visualize a research campaign
 

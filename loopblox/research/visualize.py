@@ -133,7 +133,7 @@ def read_campaign(public, task=None):
             execution=path_data, trace_path=trace_path))
     candidates.sort(key=lambda c: (c['iteration'], c['id']))
     return dict(as_of=datetime.now(timezone.utc).isoformat(timespec='seconds'),
-                source=str(public), task=task, progress=progress, checkpoints=checkpoints,
+                source=str(public), task=task, tasks=tasks, progress=progress, checkpoints=checkpoints,
                 candidates=candidates, provenance=provenance)
 
 
@@ -145,7 +145,7 @@ def number(value):
     return f'{value:,}' if value is not None else 'Unknown'
 
 
-def render_execution(execution, reference):
+def render_execution(execution, reference, *, details_key='path-order'):
     if execution is None:
         return '<p class="empty">No trace recorded for this task yet.</p>'
     previous = {str(name) for p in (reference or {}).get('patterns', []) for name, _ in p['sequence']}
@@ -224,14 +224,17 @@ def render_execution(execution, reference):
     order = ' <span class="arrow">→</span> '.join(
         f'P{r["pattern"]+1}' + (f' × {r["repeat"]}' if r['repeat'] > 1 else '') for r in execution['order'])
     return (''.join(graph) + f'<p class="trace-state">Trace: {label(execution["trace_status"])}. Numbers count observed transitions.</p>'
-            + '<details><summary>Exact path order</summary><div class="patterns">' + ''.join(blocks) + '</div>'
+            + f'<details data-key="{label(details_key)}"><summary>Exact path order</summary><div class="patterns">' + ''.join(blocks) + '</div>'
             + f'<p class="path-order">{order or "No component invocations yet."}</p></details>')
 
 
-def render_report(data):
+def render_candidate_cards(data):
+    """Render the same recorded Loop evidence for live and standalone views."""
     indexed = {c['id']: c for c in data['candidates']}
     cards = []
     for c in data['candidates']:
+        key = label(c['id'])
+        task_key = label(f'task-{data["task"]}:{c["id"]}')
         previous = indexed.get(c['reference'])
         stage = 'Baseline' if c['iteration'] == 0 else f'Round {c["iteration"]:02d}'
         current = c['id'] == data['progress'].get('incumbent')
@@ -272,17 +275,21 @@ def render_report(data):
             observed = f'{c["scored"]} of {c["planned"]} tasks scored. Complete evaluation feedback is not available yet.' if c['planned'] else 'Evaluation has not started.'
         dots = ''.join(f'<span class="task-dot {label(t["verdict"] or "pending")}" title="{label(t["task_id"])}: {label(t["verdict"] or t["status"])}">'
                        + ('●' if t['verdict'] == 'pass' else '×' if t['verdict'] == 'fail' else '·') + '</span>' for t in c['tasks'])
-        cards.append(f'''<article class="candidate{' selected' if current else ''}">
+        cards.append(f'''<article id="loop-{key}" class="candidate{' selected' if current else ''}">
 <header class="candidate-head"><div class="candidate-identity"><span class="eyebrow">{stage}</span><h2>{label(c['id'])}</h2><p>{comparison}</p></div><div class="evaluation">
 <div class="score-row"><strong>{score}</strong><span>{label(status)}</span></div>{f'<p class="score-note">{score_note}</p>' if not c['feedback_ready'] else ''}<div class="task-dots">{dots}</div>
 <dl class="cost"><div><dt>Agent input tokens</dt><dd>{number(c['agent_input_tokens'])}</dd></div><div><dt>Model attempts</dt><dd>{number(c['agent_model_calls'])}</dd></div></dl></div></header>
-<section class="path-section">{render_execution(c['execution'], previous['execution'] if previous else None)}</section>
+<section class="path-section">{render_execution(c['execution'], previous['execution'] if previous else None, details_key=f'task-{data["task"]}:{c["id"]}:path-order')}</section>
 <section class="description"><div><h3>Hypothesis <small>researcher rationale</small></h3><p>{label(excerpt)}</p>
-<details><summary>Full rationale</summary><pre>{label(c['rationale'])}</pre></details></div><div><h3>Observed <small>evaluation results</small></h3><p>{label(observed)}</p>
-<details><summary>Invocation counts · displayed task</summary><p class="observed-counts">{invocation_counts}</p></details></div></section>
-<div class="candidate-details"><details><summary>Python source</summary><pre>{label(c['source'])}</pre></details>
-{f'<details><summary>Source changes</summary><pre>{label(diff or "No source difference.")}</pre></details>' if previous else ''}
-<details><summary>Task outcomes</summary><div class="table-scroll"><table><thead><tr><th>Task</th><th>Official score</th><th>Execution</th><th>Jev</th></tr></thead><tbody>{task_rows}</tbody></table></div></details></div></article>''')
+<details data-key="{key}:rationale"><summary>Full rationale</summary><pre>{label(c['rationale'])}</pre></details></div><div><h3>Observed <small>evaluation results</small></h3><p>{label(observed)}</p>
+<details data-key="{task_key}:invocation-counts"><summary>Invocation counts · displayed task</summary><p class="observed-counts">{invocation_counts}</p></details></div></section>
+<div class="candidate-details"><details data-key="{key}:source"><summary>Python source</summary><pre>{label(c['source'])}</pre></details>
+{f'<details data-key="{key}:diff"><summary>Source changes</summary><pre>{label(diff or "No source difference.")}</pre></details>' if previous else ''}
+<details data-key="{key}:outcomes"><summary>Task outcomes</summary><div class="table-scroll"><table><thead><tr><th>Task</th><th>Official score</th><th>Execution</th><th>Jev</th></tr></thead><tbody>{task_rows}</tbody></table></div></details></div></article>''')
+    return ''.join(cards) or '<p class="empty">No saved candidates yet.</p>'
+
+
+def render_report(data):
     rail = []
     for checkpoint in data['checkpoints']:
         rail.append(f'<li><span>Round {checkpoint["iteration"]:02d}</span><b>{label(checkpoint["incumbent"])}</b></li>')
@@ -292,7 +299,7 @@ def render_report(data):
         '__TITLE__': label(Path(data['source']).parents[1].name), '__DATE__': label(data['as_of']),
         '__STATUS__': label(data['progress']['status']), '__TASK__': label(data['task'] or 'Not recorded yet'),
         '__RAIL__': ''.join(rail) or '<li>No completed checkpoints yet.</li>',
-        '__CARDS__': ''.join(cards) or '<p class="empty">No saved candidates yet.</p>',
+        '__CARDS__': render_candidate_cards(data),
         '__NOTES__': notes, '__FACTS__': label(facts),
     }
     return re.sub(r'__[A-Z_]+__', lambda match: values[match[0]], PAGE_TEMPLATE)
