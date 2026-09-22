@@ -229,6 +229,53 @@ refresh the derived report and usage summary.
 
 ## Component catalog and execution reports
 
+### Visualize a research campaign
+
+Generate a standalone HTML report from any campaign using the current continuous
+research protocol. This tool is independent of the promotional website in `site/`.
+It reads existing public records, makes no model calls, and does not execute or
+modify candidates, evaluations or campaign state.
+
+```sh
+python3 -B -m loopblox.research.visualize .artifacts/tau2/research-NEW \
+  --output .artifacts/visualizations/research-NEW.html
+```
+
+Open the resulting HTML in a browser. No server or additional Python packages are
+required. The input may also be the campaign's `research/` or `research/public/`
+directory. Keep the output outside the campaign to preserve its frozen records.
+Run the command again to update the static snapshot while research is running.
+The report supports any number of iterations and both candidates in a round.
+Archived protocols are not imported or silently converted.
+
+Candidate cards show recorded selection, official task outcomes, agent input tokens
+and model attempts, saved rationale, Python source and changes relative to the
+incumbent at the start of that round. The source comparison is not a parentage claim.
+Missing scores, unknown usage, incomplete evaluations and missing traces remain
+explicit; the report never substitutes its own selection for the host's incumbent.
+Only fully released evaluation feedback qualifies for the evaluated label.
+
+Each diagram uses the same task across candidates: the first recorded task by
+default, or an explicit task selected with `--task telecom-development-0004`.
+Diagrams derive from actual root component invocations, grouped at observations
+using that trace's frozen component contracts. They retain repeated component names within paths,
+display observed transition counts and highlight component names absent from the
+comparison trace. Expand **Exact path order** to inspect the recorded sequence.
+Grouping equal component/status sequences does not imply equal arguments, equal
+results or stalled progress. The diagram does not parse arbitrary Python into a
+control-flow graph, invent unexecuted branches, or infer source-code conditions.
+
+Scores and costs cover the whole recorded candidate evaluation; diagrams and
+invocation counts cover only the displayed task. Agent costs exclude simulated
+users, post-run Jev and researcher usage. Prior interrupted recovery attempts are
+not added to candidate totals. Research notes and the saved rationale remain
+researcher claims, separate from host-derived observations. The embedded snapshot
+records file hashes and exact invocation IDs for provenance. A running campaign's
+files are read individually, so this is a read-time snapshot, not a transaction
+across the entire experiment.
+
+### Inspect individual component calls
+
 ```sh
 # Export the current full component catalog
 python3 -B -m loopblox.runtime.components

@@ -1,13 +1,7 @@
 ![LoopBlox](docs/assets/loopblox-banner.png)
-[Quick start](#quick-start) · [Write a Loop](CONTROLLER.md) · [Components](COMPONENTS.md) · [Research protocol](experiment.md)
+[Quick start](#quick-start) · [Visualize research](#visualize-your-experiment) · [Write a Loop](CONTROLLER.md) · [Components](COMPONENTS.md) · [Research protocol](experiment.md)
 
-LoopBlox is an open-source research environment for composing agent behavior in Python and letting a research agent improve Loops on the same benchmark. Evaluate complete task outcomes and costs while keeping the tasks, model, tools, and component contracts fixed.
-
-**Research prototype.** The active benchmark is **τ²-bench telecom**, using ten audited official training tasks with deterministic scoring.
-
-**Native Codex is the default researcher.** It analyzes approved public evidence and requests candidate evaluations through the research host. The host runs tasks, completes Jev analysis, and selects the best fully evaluated Loop. See [researcher setup](docs/running.md#native-codex-researcher).
-
-The [research protocol](experiment.md) defines continuous improvement on one frozen task set. Each iteration carries its evidence and notes into the next. Research continues until the user stops it; infrastructure failures follow the recorded recovery procedure.
+LoopBlox lets a Codex researcher edit an agent's Python loop and test each version on the same benchmark. It saves the source code, task traces, scores, and research notes from each iteration. The current prototype uses ten official **τ²-bench telecom** training tasks.
 
 ## A Loop is Python
 
@@ -24,9 +18,7 @@ def run(env):
         env.component("observe_full", execution=execution["id"])
 ```
 
-A Loop chooses component order, repetition, branches, and exposed options using ordinary Python. The host owns model and tool access, isolation, budgets, and scoring. The outer `run(env)` return ends the controller; scoring follows after its worker closes.
-
-The [14 components](COMPONENTS.md) cover context and evidence, proposals, assessment, and actions. Examples for human readers include [working through plan steps](controllers/scoped_plan.py), [comparing decision proposals](controllers/compared_work.py), [reviewing completion](controllers/planned_work.py), and [reflecting after tool failures](controllers/failure_reflection.py). These alternative Loops are not supplied to the researcher. Context can retain a summary while adding new evidence, and brief observations can be paged or expanded to their original full result. The `judge` component uses Jev for caller-defined yes/no judgments and classification; questions and category descriptions are editable while evidence access and output types stay fixed. See [Judge usage](CONTROLLER.md#judge-online-typed-judgments). Contracts live in [components.py](loopblox/runtime/components.py); the catalog is generated from that source.
+The researcher can change component order, add branches, and repeat calls using ordinary Python. LoopBlox provides [14 components](COMPONENTS.md); their behavior, the task model, and the scoring rules stay fixed during research. See the [controller API](CONTROLLER.md) to write a Loop.
 
 ## How research works
 
@@ -38,93 +30,105 @@ LoopBlox keeps the best Loop by success rate, then cost. Codex saves its finding
 
 ## Quick start
 
-Use a macOS or Linux host, or a Linux shell under WSL2, with **Git, Python 3.12, [uv](https://docs.astral.sh/uv/getting-started/installation/), and Docker Engine**. Start Docker before running tasks. All commands below run from the repository root; LoopBlox runs directly from source.
+You need **Python 3.12, Git, [uv](https://docs.astral.sh/uv/getting-started/installation/), and Docker** on macOS, Linux, or WSL2. Start Docker, clone the repository, and keep your terminal in its root directory for the steps below.
 
 ```sh
 git clone https://github.com/chrischenhub/LoopBlox.git
 cd LoopBlox
-
-# Inspect the API and commands without calling models
-python3 -B -m loopblox.runtime.components --markdown
-python3 -B -m loopblox.benchmarks.run_tau2 --help
-```
-
-### 1. Install and configure research services
-
-```sh
 cp .env.example .env
 ```
 
-Follow the [installation guide](docs/running.md#install-the-host-dependencies) to install the pinned benchmark environment and Jev SDK, pull the worker image, and download the Linux Codex distribution for your Docker architecture. It includes [Codex download, login, and verification commands](docs/running.md#native-codex-researcher).
+### 1. Set up the services
 
-Edit `.env` with your own credentials and the absolute paths produced by setup:
+Research uses three services. Codex edits Loops through your ChatGPT subscription. FreeInference runs the task agent and simulated user. Jev analyzes their task traces.
 
-| Setting | Used for |
-| --- | --- |
-| `FREEINFERENCE_API_KEY` | Task-agent and simulated-user calls through the default gateway. [OpenCode Go](docs/running.md#host-configuration) is also supported. |
-| `TYPESAFE_API_KEY` | Mandatory post-run Jev analysis and the optional online `judge` component. |
-| `LOOPBLOX_JEV_PYTHON` | The interpreter containing the Jev SDK, if installed separately from the benchmark environment. |
-| `LOOPBLOX_CODEX_BINARY_ROOT` | The complete pinned Linux Codex distribution, including its Code Mode host. |
-| `LOOPBLOX_CODEX_AUTH_FILE` | Optional path to a ChatGPT login file; see [authentication setup](docs/running.md#chatgpt-login). |
+Follow the [installation guide](docs/running.md#install-the-host-dependencies) to install the benchmark environment, Jev SDK, and pinned Linux Codex distribution, then sign in to ChatGPT. Copy the two path assignments printed by setup into `.env` and set `FREEINFERENCE_API_KEY` and `TYPESAFE_API_KEY`. Paths must be absolute; `.env` does not expand `$HOME` or `$PWD`.
 
-The template lists model and provider overrides. `.env` values are read literally: use absolute paths instead of `$PWD` or `$HOME`. Process environment variables take precedence. Keep credentials in the ignored `.env` and the external login file.
+The guide also covers [other model providers](docs/running.md#host-configuration) and [login locations](docs/running.md#chatgpt-login). Research consumes service quota and continues until you stop it. Each task has [its own budget](experiment.md#limits-and-accounting).
 
 ### 2. Prepare tasks and start research
 
 ```sh
+# Use the benchmark's Python environment
+source .artifacts/upstream/tau2-bench/.venv/bin/activate
+
 # Prepare ten training tasks; this does not call models
-.artifacts/upstream/tau2-bench/.venv/bin/python -B -m loopblox.benchmarks.run_tau2 \
+python -B -m loopblox.benchmarks.run_tau2 \
   prepare --output .artifacts/tau2/telecom-suite-NEW --seed 20260921
 
-# Start research; this uses model services and your Codex subscription
-.artifacts/upstream/tau2-bench/.venv/bin/python -B -m loopblox.benchmarks.run_tau2 \
+# Evaluate the baseline, then start the researcher
+python -B -m loopblox.benchmarks.run_tau2 \
   run --suite .artifacts/tau2/telecom-suite-NEW --output .artifacts/tau2/research-NEW
 ```
 
-Choose unused output directory names for each preparation and campaign. The seed above is an example; record your chosen seed. `run` stays in the foreground, evaluates the baseline on all ten tasks, then starts continuous research. There is no automatic iteration limit; keep the process running until you stop it. Task, simulated-user, and Jev calls consume their configured services' quota.
+Choose unused output directory names and a seed for your run. `run` stays in the foreground; leave that terminal open while research is running.
 
-### 3. Inspect, stop, or recover
+### 3. Check progress and stop
 
 In a second terminal, from the same repository root:
 
 ```sh
 python3 -B -m loopblox.benchmarks.run_tau2 status --output .artifacts/tau2/research-NEW
+```
+
+To stop research, press Ctrl-C in the running terminal or use:
+
+```sh
 python3 -B -m loopblox.benchmarks.run_tau2 stop --output .artifacts/tau2/research-NEW
 ```
 
-`status` refreshes the campaign's `report.md` and `status.json`. The current best fully evaluated source is `research/selected-controller.py` inside that campaign directory. [Output navigation](docs/running.md#inspect-campaign-outputs) lists the notes, checkpoints, task traces, and analysis records.
+Wait for worker cleanup to finish. Completed results and usage remain on disk. After an infrastructure failure, follow the [recovery instructions](docs/running.md#run-stop-and-recover) to start a new attempt with the completed evidence and prior spend preserved.
 
-`stop`, or Ctrl-C in the running terminal, interrupts research and waits for cleanup while preserving results and usage. After an infrastructure failure, diagnose it and use the [recovery command](docs/running.md#run-stop-and-recover) with a new output directory and a recorded reason. Recovery preserves completed evidence and prior spend; a user-stopped campaign is not eligible for that command.
+## Inspect a run
 
-### Try the local playground
+The campaign saves its files under the directory you passed to `--output`:
 
-To explore the baseline without setting up a benchmark or researcher, configure the model gateway in `.env`, start Docker, and run:
+```text
+research-NEW/
+├── report.md                   # Scores and usage, refreshed by status
+├── status.json                 # Current state in JSON
+└── research/
+    ├── selected-controller.py  # Best fully evaluated Loop
+    └── public/
+        ├── notes.md            # Researcher's notebook
+        ├── checkpoints/        # Saved iterations
+        └── evaluations/        # Task traces, scores, and Jev analysis
+```
+
+`selected-controller.py` appears once a Loop has been fully evaluated. The researcher writes its notebook as it works. The example paths keep these records in Git-ignored `.artifacts/`; keep the campaign directory to retain them.
+
+## Visualize your experiment
+
+Generate a standalone HTML report from a running or completed campaign:
+
+```sh
+python3 -B -m loopblox.research.visualize .artifacts/tau2/research-NEW \
+  --output .artifacts/visualizations/research-NEW.html
+```
+
+Open the HTML in a browser to compare Loop versions, read source changes, and inspect one task's recorded component calls. The report also shows evaluation scores and agent model usage. Run the command again to refresh it as research progresses; generating a report makes no model calls. The [visualization guide](docs/running.md#visualize-a-research-campaign) covers task selection and accounting.
+
+## Try the local playground
+
+The playground needs the task-model gateway and Docker. With `FREEINFERENCE_API_KEY` set in `.env` and Docker running:
 
 ```sh
 docker pull python:3.12-slim
 python3 -B -m loopblox.chat serve
 ```
 
-Open http://127.0.0.1:8766/ for a local chat with a view of the reactive Loop and its recorded calls. This uses the task model service. The [playground guide](site/README.md#local-chat-and-loop-view) describes its read-only tools, per-message limits, and saved traces.
+Open http://127.0.0.1:8766/ to chat and watch the baseline's component calls. Each message uses the model service. See the [playground guide](site/README.md#local-chat-and-loop-view) for limits and saved traces.
 
-## Scope and local records
+## Find your way around the code
 
-Retired protocols, historical reports and source snapshots are kept locally in the Git-ignored `archive/` directory. Original campaign evidence and frozen implementations remain in `.artifacts/`. Neither directory is included in a fresh clone. Historical results belong to their original protocols and do not validate the current continuous workflow.
-
-SpreadsheetBench 2 modeling/debugging is the next benchmark direction. It and Terminal-Bench are not integrated; TextWorld is retired.
-
-## Explore
-
-| Start here | What you'll find |
+| File | What it does |
 | --- | --- |
-| [Controller API](CONTROLLER.md) / [examples](controllers/) | Write and compose Loops. |
-| [Concepts](loop.md) / [component contracts](COMPONENTS.md) | Definitions, boundaries, and available operations. |
-| [Research protocol](experiment.md) | Continuous Loop improvement on one frozen benchmark. |
-| [τ² setup](docs/running.md) | Environment setup, task preparation, continuous runs and recovery. |
-| [Jev analysis](docs/jev.md) | Fixed post-run segment measurements, researcher feedback, setup and usage. |
-| [Native Codex setup](docs/running.md#native-codex-researcher) | Default researcher configuration and access boundary. |
-| [Implementation](loopblox/) / [conditions](experiments/) | Runtime and research code; experiment configuration. |
-| [Website](site/README.md) | Build the read-only visual introduction. |
-| [Engineering policy](AGENTS.md) | Isolation, accounting, freezing, and recovery rules. |
+| [controllers/reactive.py](controllers/reactive.py) | The baseline task Loop. |
+| [runtime/components.py](loopblox/runtime/components.py) | Component behavior, parameters, and fixed prompts. |
+| [research/session.py](loopblox/research/session.py) | Candidate evaluations, selection, and iteration checkpoints. |
+| [research/campaign.py](loopblox/research/campaign.py) | Task limits, frozen run settings, stopping, and recovery. |
+| [benchmarks/tau2.py](loopblox/benchmarks/tau2.py) | Task preparation and integration with the official τ² environment and evaluator. |
+
+The [concept guide](loop.md) defines Loops and components. [Running research](docs/running.md) covers setup and operation; the [protocol](experiment.md) defines evaluation rules. Read [AGENTS.md](AGENTS.md) before changing the implementation.
 
 [MIT license](LICENSE). Benchmark sources and bundled font licenses are documented in [Sources and licenses](docs/sources.md).
