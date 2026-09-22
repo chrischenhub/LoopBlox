@@ -2,10 +2,10 @@
 
 Engineering and experiment policy, updated 2026-09-21.
 
-- [README.md](README.md) owns the project goal, current status and next milestone.
+- [README.md](README.md) owns the project goal and current status.
 - [experiment.md](experiment.md) owns the current continuous research protocol on one frozen benchmark and its implementation status.
-- [docs/random-search.md](docs/random-search.md), [docs/continual-improvement.md](docs/continual-improvement.md) and [docs/release-research.md](docs/release-research.md) preserve retired protocols; they are not instructions for new campaigns.
-- [docs/running.md](docs/running.md#native-codex-researcher) owns native Codex researcher setup; [docs/codex-research-comparison.md](docs/codex-research-comparison.md) preserves the retired two-researcher comparison and its information boundary.
+- [docs/running.md](docs/running.md) owns environment setup, execution commands and output paths.
+- Retired protocols, historical reports and source snapshots are preserved locally under the Git-ignored `archive/`; they are not current instructions or runtime dependencies.
 - [loop.md](loop.md) alone owns Harness, Loop, Component, Invocation and experiment boundary definitions.
 - `loopblox/runtime/components.py` owns executable component contracts; `COMPONENTS.md` is generated.
 - [CONTROLLER.md](CONTROLLER.md) explains the current controller API to the researcher.
@@ -15,15 +15,14 @@ Engineering and experiment policy, updated 2026-09-21.
 Build an open-source experiment environment for componentizing harness behavior,
 comparing compositions on verifiable tasks, and automatically searching for better
 Loops. Visualization explains components, candidate changes and observed execution.
-TextWorld is retired. The immediate release milestone and its acceptance criteria
-are owned by [README.md](README.md#announcement-target). The active release benchmark
-is τ²-bench telecom; retail runs are historical. Preserve the
-official telecom evaluator, including action checks where required. Do not substitute
+TextWorld is retired. The active benchmark is τ²-bench telecom; retail runs are
+historical. Preserve the official telecom evaluator, including action checks where
+required. Do not substitute
 environment-only scoring for tasks with additional official criteria. Current work
 iterates Loops on the same frozen benchmark under experiment.md. Random search,
 BFS/DFS, specialist/mixed-domain studies, researcher comparisons and the bounded
-two-batch release workflow are retired. Their sources are preserved under
-`archive/experiment-workflows-20260921/`; active launch commands have been removed.
+two-batch release workflow are retired. Their sources are preserved locally under
+the Git-ignored `archive/experiment-workflows-20260921/`; active launch commands have been removed.
 Historical campaigns keep their own frozen implementations. τ³ is not integrated.
 SpreadsheetBench 2 modeling/debugging is the subsequent artifact-task
 direction; it is not integrated yet.
@@ -78,10 +77,11 @@ component or trusted composite dispatch path. The boundary does not enforce
 arbitrary fixed parent workflows or open arbitrary source positions inside components. Seeing trace/source internals
 or adding a Python wrapper grants no additional capabilities.
 
-The examples in `controllers/` define complete Loops, not individual components.
-Their required components must be exposed by the experiment. Keep the examples
-consistent with the generated contracts. An ordinary Python helper does not create
-a recorded component boundary.
+The examples in `controllers/` define complete Loops for human readers. Only the
+supplied baseline is exported as a predefined Loop to the researcher; do not copy
+other examples into its public materials or inject their policies through guides.
+Keep human examples consistent with the generated contracts. An ordinary Python
+helper does not create a recorded component boundary.
 
 ## 3. Current implementation constraints: execution
 
@@ -204,9 +204,9 @@ dispatch, while retaining all deterministic official scoring requirements.
    task environment, settings, disjoint development/holdout sets and limits. Prepare
    environments before research. Save exact implementation copies and configuration,
    including environment code, versions and seeds. Provide frozen experiment.md, experiment.json,
-   controller-api.md, loop.md, components.json and component-contracts.md. Keep
-   complete alternative Loop examples in optional frozen examples/, outside the
-   default injected guide; examples do not define the episode's search boundary.
+   controller-api.md, loop.md, components.json and component-contracts.md. API snippets
+   document calls and returned values without prescribing a complete Loop or
+   a fixed branching policy. Do not export alternative predefined Loop sources.
 2. Evaluate the supplied baseline once on the full frozen development task set and
    initially select it. The host supplies `controllers/reactive.py` explicitly:
    direct composition with full context and full observations. Keep its recorded
@@ -253,7 +253,10 @@ including its background processes, before executing the next host request.
 For native Codex research, each CLI invocation reads only approved public materials
 and its own prior work, then exits with a request. The host validates and executes
 that request after the container closes. Start the next CLI only after the request
-and any mandatory Jev analysis complete. A successful `checkpoint` continues the sequence.
+and any mandatory Jev analysis complete. Within an iteration, resume the exact native
+conversation recorded by the host. A successful `checkpoint` starts the next iteration
+in a new conversation; a rejected checkpoint retains the current conversation.
+experiment.md owns this session lifecycle. Infrastructure recovery uses a fresh session.
 
 Online `judge` calls are optional Loop behavior, charged to the task and shared
 research ledger, and return `analysis_result` references. Question definitions
@@ -414,7 +417,8 @@ persistence, accounting and evaluation. Remove superseded runtime paths and unus
 abstractions; do not keep speculative compatibility layers or parallel engines.
 Preserve historical results and their exact source copies when retiring old paths.
 Keep raw experiment directories and their frozen implementations outside version
-control under `.artifacts/`. Public result summaries must identify their source
+control under `.artifacts/`, and retired protocols, reports and source snapshots
+under the ignored `archive/`. Public result summaries must identify their source
 records and preserve failure and missing-score counts; summaries cannot replace
 raw evidence. Do not modify preserved campaign files when preparing a release.
 

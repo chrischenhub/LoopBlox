@@ -75,19 +75,8 @@ The following terms remain useful for discussion:
 
 Loop exec level names internal execution without fixing its depth. A candidate can be explained by expanding complete workflow, internal stage composition, behavioral operations, and execution mechanisms. That is a view of the candidate, not a universal Harness hierarchy. Authorization, context, and cancellation can act at several integration points. Depth labels do not determine responsibility or edit permission.
 
-This is the current `planned_work.py` control flow. Indentation shows Python branches; it does not create component invocations:
-
-```text
-Complete Loop: handle the current user input
-├─ Context -> Plan
-├─ Python loop
-│  ├─ Context -> Decide
-│  ├─ Action proposal: Execute -> Observe -> continue
-│  └─ Completion proposal: Context -> Critique(target=decision ID)
-│     ├─ Contradicted or unknown: retain assessment reference -> continue
-│     └─ Supported: outer controller returns the response
-└─ Model requests and tool actions belong to their owning component invocations
-```
+Python branches and nesting do not create component invocations. Model requests
+and tool actions belong to the component invocations that actually issued them.
 
 A model/tool iteration is a convenient execution description, without requiring a dedicated entity or fixed pipeline. Standalone Think, summary, or Review calls need not involve tools. Tool groups may contain several actions; model requests may have fixed transport retries; a subagent may have its own internal process. Nesting and concurrency do not imply a fixed number of levels.
 
@@ -212,17 +201,17 @@ The following scopes are experiment conditions using the same runtime:
 
 Approved implementations and fixed framing stay fixed even in internal or joint search, including those of incorporated composite components. Judge's caller-defined questions are an explicit parameter, not edits to those internals. The researcher edits allowed candidate composition or selects catalog options, including Judge questions and Noul/Choice criteria when exposed. Rewriting approved internals requires a proposal, human incorporation, and a new library condition and episode.
 
-An example instruction for a future macro experiment is:
-
-> Compare macro compositions of Planning, Task Execution, and Review. Select, order, repeat, and conditionally invoke these approved components while fixing their internals and options. A subcomponent return completes only that call. The outer controller decides whether to continue and when to answer. Use development feedback during search, then evaluate complete outcomes and total cost on tasks excluded from search.
-
-This is a future contract example; Task Execution and AgentWork are not current components. The supplied `experiments/workflow.json` directly exposes context, Plan, Decide, Critique, Execute, and observation components. It permits both Python composition and catalog-option changes, making it joint search without a fixed internal or outer workflow. [CONTROLLER.md](CONTROLLER.md) provides operational instructions. New episodes copy `public/controller-api.md`, `public/loop.md`, the frozen experiment specification, and its filtered catalog.
+The current `experiments/tau2.json` exposes the approved components and their
+allowed options for Python composition. Its catalog defines the available
+operations without prescribing an execution order. [CONTROLLER.md](CONTROLLER.md)
+provides operational instructions. New episodes copy `public/controller-api.md`,
+`public/loop.md`, the frozen experiment specification, and its filtered catalog.
 
 When several levels change together, gains cannot be attributed solely to macro structure. Traces suggest explanations; matched controls and ablations test them. A single success does not establish improvement, and a searched composition may not beat the original baseline. Freeze the model, budget, and statistical protocol separately for each experiment.
 
 ## 10. Current implementation boundaries
 
-- `controllers/*.py` define complete task controllers that directly compose exposed subcomponents. `reactive.py` is the shared baseline; completion review references decision results directly.
+- `controllers/*.py` define complete task controllers for human readers. Only `reactive.py`, the shared baseline, is supplied as a predefined Loop in researcher materials.
 - `loopblox/runtime/components.py` owns four families and the membership and contracts of 14 subcomponents. Each current model-bearing subcomponent makes one logical model call, with every transport attempt charged separately. Families add no calls or permissions.
 - Plan steps can scope decisions; Python owns their composition and continuation. AgentWork, `work` references, trusted composite dispatch, and subagent components are absent.
 - Research entry points freeze the question, outer components, and allowed options. Judge questions and category definitions may vary with the frozen candidate source. The host restricts calls but does not enforce edit constraints at arbitrary internal source positions.

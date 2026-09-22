@@ -8,6 +8,11 @@ Start a fresh campaign without importing historical results, candidates or resea
 notes. The researcher iteratively improves the task Loop; model weights and the
 approved component library remain fixed.
 
+The supplied reactive baseline is the only predefined complete Loop disclosed to
+the researcher. Provide the component contracts, API syntax and permitted evidence
+from this campaign. Human-facing repository examples are not exported; guides
+must not introduce additional complete Loops or require their design mechanisms.
+
 1. Freeze ten official telecom training tasks, the baseline, components, model
    settings and execution limits. Run the baseline once on all ten tasks, with
    official scoring and Jev analysis. Select it as the initial incumbent.
@@ -108,6 +113,20 @@ with the sources, ranking, incumbent change, notes and cumulative gateway spend,
 then opens the next iteration. Notes should cover the hypothesis, evidence,
 failed approaches and next direction. `write_notes` remains available for work
 in progress. Checkpoints and public evidence carry experience within this campaign.
+
+The native researcher uses one Codex conversation per iteration. After each host
+request, its next CLI invocation resumes the exact recorded session and receives
+the request's receipt. A successful checkpoint ends that conversation; the next
+iteration starts a new session from the notebook, latest checkpoint and public
+evidence. A rejected checkpoint does not change sessions. Each CLI and its
+container still close before host work begins. Session storage stays in the
+temporary private Codex home and is removed when the researcher closes;
+infrastructure recovery always starts a fresh session. Record requested and
+observed session IDs with each native invocation.
+Native CLI token reports are cumulative within a conversation. Retain those raw
+totals and derive each invocation's usage by subtracting its preceding report in
+the same session; missing or decreasing counters remain unknown. New sessions
+start their own accounting baseline.
 
 ## Stopping and recovery
 

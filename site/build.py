@@ -9,6 +9,7 @@ import re
 import shutil
 import subprocess
 import sys
+from evolution import render as render_evolution, snapshot as snapshot_evolution
 
 ROOT = Path(__file__).resolve().parent
 SNAPSHOTS = ROOT / 'snapshots'
@@ -33,13 +34,13 @@ PLAIN_NAMES = {
 }
 
 
-def build(refresh_notes=False):
+def build(refresh_notes=False, research_records=None):
+    if research_records:
+        snapshot_evolution(research_records, SNAPSHOTS / 'evolution.json')
     if refresh_notes:
         SNAPSHOTS.mkdir(exist_ok=True)
         for source, target in [('README.md', 'project.md'), ('loop.md', 'loop.md'),
-                               ('controllers/reactive.py', 'reactive.py'),
-                               ('docs/experiments/dfs-closeout-20260915/results.json', 'results.json'),
-                               ('docs/experiments/dfs-closeout-20260915/README.md', 'experiment-report.md')]:
+                               ('controllers/reactive.py', 'reactive.py')]:
             shutil.copyfile(ROOT.parent / source, SNAPSHOTS / target)
         for args, target in [([], 'components.json'), (['--markdown'], 'component-contracts.md')]:
             result = subprocess.check_output([sys.executable, '-B', '-m', 'loopblox.runtime.components', *args], cwd=ROOT.parent)
@@ -75,32 +76,10 @@ def build(refresh_notes=False):
         groups.append(f'<section class="family"><span class="eyebrow">0{i} / {len(family["members"])} COMPONENTS</span>'
                       f'<h3>{html.escape(definition["label"])}</h3><p>{html.escape(definition["description"])}</p>'
                       f'<ul>{members}</ul></section>')
-    results = json.loads((SNAPSHOTS / 'results.json').read_text())
-    result_rows = []
-    for branch in results['branches']:
-        candidate, baseline_result = branch['candidate'], branch['baseline']
-        status = 'Submitted' if branch['status'] == 'submitted' else 'No accepted submission'
-        result_rows.append(
-            f'<tr><th scope="row"><code>{html.escape(branch["name"])}</code>'
-            f'<span>{html.escape(branch["description"])}</span></th>'
-            f'<td class="result-score">{candidate["passed"]}/{candidate["attempts"]}</td>'
-            f'<td class="result-score">{baseline_result["passed"]}/{baseline_result["attempts"]}</td>'
-            f'<td class="result-calls">{candidate["model_calls"]} / {baseline_result["model_calls"]}</td>'
-            f'<td>{status}</td></tr>')
-    totals = results['cumulative_dfs']
-    result_metrics = ''.join(
-        f'<div><dt>{label}</dt><dd>{totals[key]:,}</dd></div>'
-        for key, label in [('attempts', 'Task attempts'), ('scored', 'Scored results'),
-                           ('missing_scores', 'Missing scores'), ('model_calls', 'Model attempts')])
-    latest = results['latest_recovery']
-    closeout = (f'All {latest["completed_scored_attempts"]} task attempts in the latest recovery received scores, '
-                f'with {latest["new_missing_scores"]} new missing scores. '
-                'After evaluation, a submission-guard error rejected the researcher’s baseline submission. '
-                'The operator stopped the researcher; loop04 has no accepted submission. '
-                'Earlier loop06 and loop08 submissions remain preserved.')
+    evolution = json.loads((SNAPSHOTS / 'evolution.json').read_text())
     digest = hashlib.sha256(''.join((SNAPSHOTS / name).read_text() for name in
                                     ['project.md', 'loop.md', 'components.json', 'reactive.py',
-                                     'results.json', 'experiment-report.md']).encode()).hexdigest()
+                                     'results.json', 'experiment-report.md', 'evolution.json']).encode()).hexdigest()
     template = (ROOT / 'index.html').read_text()
     for name in set(re.findall(r'data-component="([a-z_]+)"', template)):
         if name not in catalog:
@@ -114,11 +93,7 @@ def build(refresh_notes=False):
         '__FAMILY_COUNT__': str(len(families)),
         '__BASELINE__': html.escape(baseline),
         '__SOURCE_DIGEST__': digest,
-        '__RESULT_DATE__': html.escape(results['as_of']),
-        '__RESULT_MODEL__': html.escape(results['model']),
-        '__RESULT_ROWS__': ''.join(result_rows),
-        '__RESULT_METRICS__': result_metrics,
-        '__RESULT_CLOSEOUT__': closeout,
+        **render_evolution(evolution),
     }.items():
         if marker not in template:
             raise ValueError(f'Missing template marker: {marker}')
@@ -133,6 +108,10 @@ def build(refresh_notes=False):
     shutil.copyfile(SNAPSHOTS / 'component-contracts.md', output / 'component-contracts.md')
     shutil.copyfile(SNAPSHOTS / 'reactive.py', output / 'baseline.py')
     shutil.copyfile(SNAPSHOTS / 'results.json', output / 'results.json')
+    shutil.copyfile(SNAPSHOTS / 'evolution.json', output / 'evolution.json')
+    (output / 'sources').mkdir()
+    for record in evolution['records']:
+        (output / 'sources' / f'{record["id"]}.py').write_text(record['source'])
     # The reviewed report's only other links point into repository documentation.
     report = (SNAPSHOTS / 'experiment-report.md').read_text()
     report = re.sub(r'\[([^\]]+)\]\((?!results\.json\))[^)]+\)', r'\1', report)
@@ -144,4 +123,7 @@ if __name__ == '__main__':
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--refresh-notes', action='store_true',
                         help='Refresh project, concept, component and baseline snapshots from the parent repository')
-    build(parser.parse_args().refresh_notes)
+    parser.add_argument('--research-records', type=Path,
+                        help='Snapshot the reviewed first three rounds from an explicit research/public directory')
+    args = parser.parse_args()
+    build(args.refresh_notes, args.research_records)

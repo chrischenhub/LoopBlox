@@ -43,26 +43,37 @@ reserved cost. One turn runs at a time across this local server.
 
 ## Hosted introduction
 
-The English introduction to domain loop auto research. It explains the research
-process, the reactive task-loop baseline, the approved component library, and the
-planned retail / telecom / mixed-domain study. The dark pixel interface uses an ink-green
+The English introduction to domain loop auto research. It shows the baseline and
+first three iterations of the current telecom campaign, then explains continuous
+research, the reactive task-loop baseline and the component library. The dark pixel interface uses an ink-green
 canvas with a faint pixel-dither field, square panels with terminal title bars and corner
 ticks, and pixel-shadowed buttons. Departure Mono carries the wordmark, labels, and
 diagrams, JetBrains Mono the code and component identifiers, and Source Serif 4 the
 headings and running prose. SVG paths show continuation, branching, and research
-boundaries; they are illustrations, never executable controllers or live traces.
+boundaries. Candidate diagrams are reviewed summaries of saved Python, never
+executable controllers or live traces. The evolution view is static and has no
+polling, animation, graph editor or backend.
 
 ## Content ownership
 
 - The parent `README.md` owns the project direction, study question, and status.
-- The [September 15 closeout](../docs/experiments/dfs-closeout-20260915/README.md)
-  and its `results.json` own the latest public experiment summary. The website
-  freezes exact copies under `snapshots/`; `--refresh-notes` updates them. All
-  displayed scores and cumulative counts derive from that JSON, whose provenance
-  identifies the raw host records. A normal build does not read raw experiment data.
-- The current BFS/DFS [experiment guideline](../docs/random-search.md) owns its
-  fixed-task pilot settings. The site's holdout diagram describes the planned
-  domain study; it is not a record of validation or holdout in that pilot.
+- `experiment.md` owns the continuous protocol. The site does not dispatch research
+  or final evaluations.
+- [The evolution snapshot](snapshots/evolution.json) derives outcomes, agent usage,
+  component counts and selection checkpoints from the campaign's public records.
+  It includes source paths, hashes, exact candidate Python, rationales and a UTC
+  snapshot time. This is a bounded view of four evaluated sources, not cumulative
+  campaign accounting; recovery attempts are not included in these candidate costs.
+- `evolution.py` owns the reviewed presentation of those four exact source hashes.
+  It extracts the snapshot and renders the static cards. Source changes require
+  review of the diagrams; arbitrary Python is not compiled into a control graph.
+  The top rail shows incumbent retention/replacement, not inferred code ancestry.
+- The [September 15 closeout snapshot](snapshots/experiment-report.md) and
+  [result snapshot](snapshots/results.json) preserve the historical experiment
+  retained as downloadable files without a homepage section. Its scores and cumulative counts derive from that
+  JSON, whose provenance identifies the raw host records. These exact snapshots
+  remain unchanged by `--refresh-notes`; the original reports and protocols have
+  moved to the local, Git-ignored `archive/` directory.
 - The parent `loop.md` owns the definitions and experiment boundaries.
 - `loopblox/runtime/components.py` owns the component catalog. Family membership, descriptions,
   contracts, and counts are generated from its frozen JSON catalog.
@@ -92,9 +103,21 @@ python3 -m http.server 8765 --bind 127.0.0.1 --directory site/dist
 
 To build only from the checked-in snapshots, run `python3 -B site/build.py` from
 the repository root.
+
+To explicitly replace the first-three-round snapshot from the reviewed campaign:
+
+```sh
+python3 -B site/build.py --research-records .artifacts/tau2/continuous-telecom-20260921-recovery-02/research/public
+```
+
+This reads public records only and never writes to the campaign. Incomplete
+feedback is rejected. Checkpoint status and failure counts remain in the downloadable
+snapshot without separate status lines on the cards. Ordinary builds and `--refresh-notes` retain
+the saved research snapshot; neither follows a running campaign automatically.
+
 There are no third-party runtime dependencies. The generated `dist/` contains the
 English page, locally served fonts and their licenses, downloadable component
-contracts, the exact baseline Python source, and the reviewed experiment report
+contracts, the exact baseline and candidate Python sources, the evolution snapshot, and the historical experiment report
 and aggregate results with source hashes. Repository-only links are removed from
 the deployed report. A rebuild replaces this derived
 output.
@@ -102,6 +125,7 @@ output.
 The website is an ordinary directory in the main repository. Local deployment
 metadata under `.openai/` is ignored by Git and is not required to build or preview.
 Configure your own hosting destination when publishing. Publish only `dist/`;
-experiment data, credentials and source snapshots are not part of the static output.
+raw task traces, private experiment data, credentials and implementation snapshots
+are not part of the static output.
 
 Bundled fonts retain their [own licenses](assets/fonts/README.md).

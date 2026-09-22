@@ -180,17 +180,6 @@ class ResearchSession:
         atomic_text(self.public / "controller-api.md", self.api_guide)
         atomic_text(self.public / "experiment.md", (ROOT / "experiment.md").read_text())
         atomic_text(self.public / "loop.md", (ROOT / "loop.md").read_text())
-        examples = self.public / "examples"
-        examples.mkdir()
-        example_sources = sorted(path for path in (ROOT / "controllers").glob("*.py")
-                                 if path.read_text() != baseline_source)
-        for path in example_sources:
-            atomic_text(examples / path.name, path.read_text())
-        atomic_text(examples / "index.md",
-                    "# Optional Loop examples\n\n"
-                    "Exact source snapshots for API usage, not a recommended search sequence. "
-                    "An example is usable only if experiment.json exposes every component and option it calls.\n\n"
-                    + "\n".join(f"- [{path.name}]({path.name})" for path in example_sources) + "\n")
         snapshot_implementation(self.private)
         initial = self.save_candidate({
             "source": baseline_source,
@@ -584,8 +573,8 @@ class ResearchSession:
                     "reference, not a required candidate structure. "
                     "The experiment is included in this task; read experiment.md, controller-api.md and component-contracts.md "
                     "before designing candidates. components.json has exact schemas and fixed prompts; loop.md defines "
-                    "the concepts. Optional examples/index.md is available for API usage, not search guidance. "
-                    "Use research_shell to search and analyze the allowed public records in /evidence with shell "
+                    "the concepts. "
+                    "Use native local tools or research_shell to search and analyze the allowed public records in /evidence with shell "
                     "and Python. /work preserves your scripts and scratch files across commands in this episode. "
                     "Evaluation receipts and this task contain compact navigation, not the full evidence. "
                     "Read linked files, compute comparisons, and follow exact invocation references as needed. "

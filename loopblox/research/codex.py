@@ -30,8 +30,9 @@ DOCKER_SANDBOX = ["--security-opt", "seccomp=unconfined", "--cap-drop", "ALL",
                   "--cap-add", "SETUID", "--cap-add", "SETGID", "--cap-add", "SETFCAP",
                   "--security-opt", "no-new-privileges"]
 FILE_INSTRUCTIONS = (
-    "Read /exchange/task.json for the research task and /exchange/tools.json for the canonical host tools. "
-    "Before continuing research on every invocation, read /evidence/notes.md and the latest checkpoint "
+    "Read /exchange/task.json for the opening research task and /exchange/tools.json for the canonical host tools. "
+    "Read /evidence/progress.json for current state; the opening task's selection and iteration counts are historical. "
+    "At the start of this iteration, read /evidence/notes.md and the latest checkpoint "
     "in /evidence/checkpoints/iteration-*.json (the highest iteration number), if present. "
     "These files may not exist yet at the start of research. "
     "The allowed evidence is in /evidence. Maintain /evidence/notes.md as the single research notebook, "
@@ -41,8 +42,15 @@ FILE_INSTRUCTIONS = (
     "but are not automatically included in notes or checkpoints. Transfer useful research conclusions "
     "into the research notebook rather than maintaining a second notebook in /work. "
     "Both notes and scratch remain researcher claims, not verified facts. "
-    "Your previous requests and host receipts are in /exchange/receipts. "
-    "Use native local tools to analyze those files. The host tools are requested through your final output, "
+    "The host resumes this conversation after each request within the iteration. A successful checkpoint "
+    "ends this conversation; the next iteration starts a new conversation from notes, checkpoints and "
+    "public evidence. A rejected checkpoint keeps this conversation open. "
+    "The latest completed host request and receipt are included below, when present; consume that result "
+    "before choosing the next request. Earlier requests and receipts are in /exchange/receipts. "
+    "Use native local tools to read and analyze /evidence, /work and receipt files within this invocation. "
+    "If a receipt contains an output preview, read its output_path under /evidence for the remaining content; "
+    "do not rerun a completed command just to retrieve its output. "
+    "The host tools are requested through your final output, "
     "not called as native tools. End this invocation with exactly one JSON object containing "
     "\"tool\" (a canonical tool name) and \"arguments\" (its argument object), without Markdown. "
     "The host will execute it only after this CLI and its container close. "
@@ -108,9 +116,9 @@ def native_usage(calls):
     """CLI turn totals never claim provider attempts or subscription cost."""
     usages = [call.get("usage") for call in calls]
     return dict(model_attempts=None, cost_usd=None, child_agents="disabled", calls=usages,
-        coverage="CLI completed-turn totals; failed or interrupted usage may be missing",
+        coverage="Per-invocation usage derived from CLI session totals; failed or interrupted usage may be missing",
         **{key: sum(value[key] for value in usages)
-           if usages and all(value is not None and key in value for value in usages) else None
+           if usages and all(value is not None and type(value.get(key)) is int for value in usages) else None
            for key in ("input_tokens", "output_tokens", "cached_input_tokens", "reasoning_output_tokens")})
 
 
@@ -179,13 +187,17 @@ class CodexResearcher:
                     binary_sha256=_binary_digest(binary), container_image=image, model=self.model,
                     reasoning_effort=self.reasoning_effort, timeout_seconds=self.timeout_seconds,
                     authentication="native_chatgpt_subscription", features=copy.deepcopy(FEATURES),
-                    invocation="codex exec", exchange="one JSON tool request per completed CLI invocation",
-                    file_instructions=FILE_INSTRUCTIONS, ephemeral=True, children="disabled",
+                    invocation="codex exec / codex exec resume <session_id>",
+                    exchange="one JSON tool request per completed CLI invocation",
+                    file_instructions=FILE_INSTRUCTIONS, ephemeral=False,
+                    sessions="Resume within an iteration; new session after a successful checkpoint or infrastructure recovery",
+                    session_storage="Temporary private Codex home; removed when the researcher closes",
+                    children="disabled",
                     web_search="disabled", bundled_skills=False,
                     sandbox=dict(profile="research", extends=":workspace", network=False,
                                  denied_paths=["/root/.codex"], docker_arguments=DOCKER_SANDBOX,
                                  evidence="/evidence (read-only)", scratch="/work"),
-                    usage="CLI completed-turn totals; provider attempt count and subscription price unknown")
+                    usage="Per-invocation differences of CLI session totals; provider attempt count and subscription price unknown")
 
     def _config_text(self):
         lines = [f"model = {json.dumps(self.model)}",
@@ -199,13 +211,22 @@ class CodexResearcher:
         lines.extend(['[skills]', 'include_instructions = false', '[skills.bundled]', 'enabled = false'])
         return "\n".join(lines) + "\n"
 
-    def _invoke(self, materials, directory, seconds, image, home):
+    def _invoke(self, materials, directory, seconds, image, home, *, session_id=None):
         """Return only after natural CLI exit and removal of its entire container."""
+        prompt = ("Continue the current research iteration using the host result below. "
+                  "The previous CLI and its container closed before the host executed that request. "
+                  "Conversation history is preserved; tool processes and in-memory variables are not. "
+                  "Read updated public evidence as needed. Return exactly one JSON object with tool and arguments."
+                  if session_id else FILE_INSTRUCTIONS)
+        receipts = sorted((materials / "receipts").glob("call-*.json"))
+        if receipts:
+            latest = receipts[-1]
+            prompt += f"\n\nLatest completed host exchange (/exchange/receipts/{latest.name}):\n" + latest.read_text()
         name = "loopblox-codex-" + uuid.uuid4().hex
         process = None
         output = directory / "output"
         output.mkdir()
-        command = ["docker", "run", "--rm", "--pull", "never", "--name", name, "--read-only",
+        command = ["docker", "run", "--rm", "--interactive", "--pull", "never", "--name", name, "--read-only",
                        *DOCKER_SANDBOX, "--pids-limit", "128", "--memory", "1g", "--cpus", "2",
                        "--workdir", "/work", "--tmpfs", "/tmp:rw,nosuid,size=64m",
                        "--mount", f"type=bind,src={Path(self.binary_root).resolve()},dst=/opt/codex,readonly",
@@ -214,12 +235,13 @@ class CodexResearcher:
                        "--mount", f"type=bind,src={Path(self.scratch_path).resolve()},dst=/work",
                        "--mount", f"type=bind,src={materials},dst=/exchange,readonly",
                        "--mount", f"type=bind,src={output},dst=/output", image,
-                       "/opt/codex/bin/codex", "exec", "--ephemeral", "--json", "--skip-git-repo-check",
-                       "--color", "never", "-C", "/work", "-o", "/output/request.json", FILE_INSTRUCTIONS]
+                       "/opt/codex/bin/codex", "exec", "--json", "--skip-git-repo-check",
+                       "--color", "never", "-C", "/work", "-o", "/output/request.json"]
+        command += ["resume", session_id, "-"] if session_id else ["-"]
         try:
             with (directory / "events.jsonl").open("wb") as events, (directory / "stderr.txt").open("wb") as errors:
-                process = subprocess.Popen(command, stdin=subprocess.DEVNULL, stdout=events, stderr=errors)
-                process.wait(timeout=None if math.isinf(seconds) else seconds)
+                process = subprocess.Popen(command, stdin=subprocess.PIPE, stdout=events, stderr=errors)
+                process.communicate(prompt.encode(), timeout=None if math.isinf(seconds) else seconds)
         except subprocess.TimeoutExpired as error:
             raise BudgetExhausted("research_time_limit") from error
         finally:
@@ -230,14 +252,16 @@ class CodexResearcher:
                     if process.poll() is None:
                         process.kill()
                     process.wait(timeout=10)
-        usage, failure = None, None
+        usage, failure, observed_session = None, None, None
         for line in (directory / "events.jsonl").read_text().splitlines():
             event = json.loads(line)
-            if event.get("type") == "turn.completed":
+            if event.get("type") == "thread.started":
+                observed_session = event.get("thread_id")
+            elif event.get("type") == "turn.completed":
                 usage = event.get("usage")
             elif event.get("type") in {"error", "turn.failed"}:
                 failure = event
-        return dict(exit_code=process.returncode, usage=usage, failure=failure)
+        return dict(exit_code=process.returncode, usage=usage, failure=failure, session_id=observed_session)
 
     def run(self, task, tools, meter, trace_path, *, check_stop=lambda: None):
         self.validate_auth()
@@ -278,19 +302,36 @@ class CodexResearcher:
             shutil.copyfile(Path(self.auth_path), home / "auth.json")
             (home / "auth.json").chmod(0o600)
             (home / "config.toml").write_text(self._config_text())
+            session_id = None
             while True:
                 check_stop()
                 identifier = f"call-{len(result['calls']) + 1:06d}"
                 directory = calls_directory / identifier
                 directory.mkdir()
-                call = dict(call_id=identifier, status="started", start_seconds=time.monotonic() - started)
+                call = dict(call_id=identifier, status="started", resumed_session_id=session_id,
+                            start_seconds=time.monotonic() - started)
                 result["calls"].append(call)
                 atomic_json(trace_path, result)
-                call.update(self._invoke(materials, directory, remaining(), configuration["container_image"], home))
+                call.update(self._invoke(materials, directory, remaining(), configuration["container_image"], home,
+                                         session_id=session_id))
+                # Resumed CLI usage is cumulative for the conversation, not this invocation.
+                call["session_usage"] = call["usage"]
+                if session_id:
+                    previous = (result["calls"][-2].get("session_usage")
+                                if call["session_id"] == session_id else None)
+                    current = call["session_usage"]
+                    call["usage"] = ({key: value - previous[key]
+                                      if type(value) is int and type(previous.get(key)) is int
+                                      and value >= previous[key] else None
+                                      for key, value in current.items()}
+                                     if current is not None and previous is not None else None)
                 atomic_json(trace_path, result)
                 check_stop()
                 if call["exit_code"] or call["failure"]:
                     raise HostFault("Native CLI failed; inspect " + str(directory / "stderr.txt"))
+                if not call["session_id"] or (session_id and call["session_id"] != session_id):
+                    raise HostFault("Native CLI did not return the expected research session")
+                session_id = call["session_id"]
                 request = json.loads((directory / "output/request.json").read_text())
                 if (not isinstance(request, dict) or set(request) != {"tool", "arguments"}
                         or request["tool"] not in tools or not isinstance(request["arguments"], dict)):
@@ -318,6 +359,8 @@ class CodexResearcher:
                 call.update(status="completed", outcome=outcome, end_seconds=time.monotonic() - started)
                 atomic_json(materials / "receipts" / (identifier + ".json"), dict(request=request, receipt=outcome))
                 atomic_json(trace_path, result)
+                if request["tool"] == "checkpoint" and outcome["status"] == "ok":
+                    session_id = None
         except KeyboardInterrupt:
             result.update(status="stopped", error="user_stop")
             raise

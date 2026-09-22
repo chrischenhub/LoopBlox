@@ -91,11 +91,9 @@ Existing components' internals remain fixed; their composition belongs to your
 Python controller. A Plan step can scope a decision without creating a session,
 worker, or separate budget. Consult its generated contract for actual behavior.
 
-If API syntax examples are useful, read the frozen `examples/index.md`, then the
-referenced Python files with `read_artifact`. These are optional source snapshots
-from `controllers/`, not an exhaustive search space or a recommended sequence.
-They are not included in the default research instructions. Check their component
-and option requirements against the episode catalog before using them.
+The supplied baseline is the only predefined complete Loop in the research
+materials. Candidate sources and evidence accumulate within this campaign.
+Repository examples for human readers are not exported to the researcher.
 
 ## Capability families and subcomponents
 
@@ -228,31 +226,25 @@ judgments instead of generated explanations. Python owns their interpretation an
 the next action. This is an explicit editable question interface; it does not open
 other components' prompts or allow arbitrary output schemas.
 
+The following shows the call and result syntax. The candidate supplies
+`context_id`, question text and category descriptions, and decides how to use
+the returned judgments.
+
 ```python
-context = env.component("context_recent")
-judgment = env.component("judge", context=context["id"], questions={
-    "redundant": {
+judgment = env.component("judge", context=context_id, questions={
+    "check": {
         "type": "noul",
-        "instructions": "Does the latest observed action repeat already answered "
-                        "work without relevant new information or a changed state?",
+        "instructions": noul_question,
     },
-    "situation": {
+    "classification": {
         "type": "choice",
-        "instructions": "Classify the latest observed action in its preceding context. "
-                        "Prefer changed_state when relevant state changed; otherwise "
-                        "distinguish a justified check from redundant work.",
-        "criteria": {
-            "changed_state": "Relevant new information or a task-state change.",
-            "justified_check": "No relevant change, but an explicit reason to verify or wait again.",
-            "redundant": "Already answered or completed work, with no relevant change or retry reason.",
-            "unclear": "Insufficient evidence, or none of the other descriptions fits.",
-        },
+        "instructions": choice_question,
+        "criteria": category_descriptions,
     },
 })
 answers = judgment["value"]["answers"]
-# An illustrative policy, not a recommended or calibrated threshold.
-if answers["redundant"]["noul"] >= 0.8 and answers["situation"]["choice"] == "redundant":
-    reflection = env.component("reflect", context=context["id"], inputs=[judgment["id"]])
+probability = answers["check"]["noul"]
+category = answers["classification"]["choice"]
 ```
 
 `questions` is a nonempty map of question IDs to definitions. Question IDs route
@@ -266,9 +258,10 @@ The result contains the original `questions` and matching `answers`:
 
 - Noul: `{"type": "noul", "noul": 0.9}`. This is the probability of yes; a value
   near 0.5 means uncertainty, not medium intensity. There is no separate confidence.
-- Choice: `{"type": "choice", "choice": "redundant", "confidence": 0.7,
-  "probabilities": {"changed_state": 0.1, "justified_check": 0.05,
-  "redundant": 0.8, "unclear": 0.05}}`. The selected label must be a maximum;
+- Choice: `{"type": "choice", "choice": "label_a", "confidence": 0.7,
+  "probabilities": {"label_a": 0.8, "label_b": 0.1,
+  "label_c": 0.05, "label_d": 0.05}}`. Labels come from the candidate's
+  category descriptions. The selected label must be a maximum;
   probabilities cover exactly the supplied labels and sum approximately to one.
   Confidence describes distribution concentration, not verified correctness.
 
@@ -308,8 +301,6 @@ judgment. See [Jev setup](docs/jev.md#setup-and-offline-inspection).
 Changing questions, categories or branching changes the candidate design. Freeze
 that source and evaluate the whole Loop; a gain does not isolate the classifier
 from its surrounding policy. Existing frozen campaigns do not gain Judge access.
-The complete [judged reflection example](controllers/judged_reflection.py) is one
-possible composition, not an experimentally validated recommendation.
 
 ## Decisions and termination
 
@@ -348,9 +339,7 @@ Actions must be nonempty. The host registers immutable requests and adds action
 IDs; the caller chooses when to execute them. Empty actions are not completion.
 The decision component returns the completion variant; its controller decides
 whether to review that decision, continue, or return. A selected Plan step can
-contain many decision/tool iterations. No fixed round count is required. See
-`controllers/scoped_plan.py` for step scope and `controllers/compared_work.py` for
-proposal comparison; both are ordinary Python Loops using the same runtime.
+contain many decision/tool iterations. No fixed round count is required.
 
 Actual tool effects, task termination, and hidden verification remain distinct.
 The worker closes before sealed scoring; no evaluator feedback reaches that
@@ -435,8 +424,7 @@ of this same logical campaign preserves completed batches and checkpoints under
 
 The initial task's `initial_selection` identifies the incumbent after opening or
 recovery. `episode` names the current public scope; evaluation tools take local
-candidate IDs. Retired inheritance APIs live only in the
-[workflow archive](archive/experiment-workflows-20260921/README.md).
+candidate IDs.
 
 Paths in `evidence.json` are relative to the current public file root and can be
 passed directly to `read_artifact`. Reading a directory lists exact paths;
@@ -468,7 +456,7 @@ not become public evidence merely because they are charged.
 `research_shell(command, timeout_seconds=30)` executes shell or Python analysis.
 Its working directory is `/work`, a writable scratch directory retained across
 commands in this episode. `/evidence` is the read-only public artifact root,
-including only the historical experience admitted to this episode. Python's
+including the completed evidence retained within this campaign. Python's
 standard library and `sh` are available; additional programs are not assumed.
 The initial task links to this guide, the component contracts, `jev-guide.md`,
 `jev-config.json` and `research-workspace.json` instead of injecting their full
@@ -478,7 +466,9 @@ Research tools run serially. Analysis commands and their background processes
 close before evaluation starts; the next researcher request runs only after the
 whole evaluation and mandatory Jev analysis finish. Saved candidates, notes and
 retained command output are available when their tool receipts return, including
-output from recoverable command failures. A successful `checkpoint` preserves an iteration and continues research.
+output from recoverable command failures. A successful `checkpoint` preserves an
+iteration and starts a new native conversation for the next iteration; other
+requests continue the same conversation, as defined in [experiment.md](experiment.md#selection-and-checkpoints).
 
 Use the workspace to search text, parse JSON, compute paired differences, follow
 invocation IDs and save reusable analysis scripts. For example:
@@ -635,6 +625,4 @@ Unknown usage stays unknown; incurred costs, failed
 attempts, and interruptions are retained. Every episode uses a new directory;
 Python continuations are not resumed. `loopblox/benchmarks/run_tau2.py` connects
 concrete environments to the host task runner. `ResearchSession` owns research
-operations; the retained specialist/mixed-domain study is a retired caller.
-SpreadsheetBench 2 and Terminal-Bench are not
-integrated yet. The obsolete SWE-bench placeholder and launcher have been removed.
+operations. SpreadsheetBench 2 and Terminal-Bench are not integrated yet.

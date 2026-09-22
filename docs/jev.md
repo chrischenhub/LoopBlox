@@ -4,8 +4,7 @@ Jev has two separate roles. The optional `judge` component runs inside a task Lo
 the researcher defines Noul/Choice questions and classification criteria, Jev
 judges the current public evidence, and Python decides what to do next. Its
 reference type is `analysis_result`. See the [Judge API and question-design
-guide](../CONTROLLER.md#judge-online-typed-judgments) and the
-[complete example](../controllers/judged_reflection.py).
+guide](../CONTROLLER.md#judge-online-typed-judgments).
 
 Judge's calls consume task and ancestor research budgets and are recorded under
 their component invocation IDs in `trace.json`, including actual questions, state,
@@ -156,7 +155,8 @@ and computation with `research_shell`; `read_artifact` can also open individual
 records. These are derived views, not a new source of judgments. Existing frozen
 records remain exact: older evaluations may lack this navigation view, while their
 `jev.json` still contains segment `ids`, `shape`, `state` and exact responses.
-Completed research may export these public records as lineage experience.
+Checkpoints retain these public records as evidence for subsequent iterations in
+the same campaign.
 
 Both roles reuse `loopblox/runtime/jev.py`, using `jev-1.13.0` through the existing bounded process runner and shared model
 gateway. SDK retries are disabled; the gateway owns retry decisions and records
@@ -265,5 +265,3 @@ The first command makes no model requests. The second uses the same analysis and
 accounting path, with an uncapped offline ledger in the new output directory; it
 copies public traces and preserves all source campaign records. A new analysis is
 a new set of calls. Existing frozen campaigns retain their original implementation.
-The retired A/B pilots and their limitations are recorded in
-[the historical pilot notes](experiments/jev-trace-ab.md).
