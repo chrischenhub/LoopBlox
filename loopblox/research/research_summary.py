@@ -193,4 +193,4 @@ def research_summary(public, loops):
                               "They show the researcher's stated interpretation, not an independently recorded log of "
                               "which artifacts were read. Available Jev evidence alone does not establish its use or a causal gain."),
             sources=sorted({"jev-config.json", "jev-guide.md"} & sources
-                           | {item["artifact"] for item in analyses}))))
+                           | {item["artifact"] for item in analyses})))
