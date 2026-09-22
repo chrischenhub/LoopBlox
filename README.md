@@ -1,6 +1,6 @@
-# LoopBlox
+![LoopBlox](docs/assets/loopblox-banner.png)
 
-![Search for better agent loops.](docs/assets/loopblox-banner.svg)
+# LoopBlox
 
 [Quick start](#quick-start) · [Write a Loop](CONTROLLER.md) · [Components](COMPONENTS.md) · [Research protocol](experiment.md)
 
