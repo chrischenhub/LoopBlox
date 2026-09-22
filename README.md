@@ -1,7 +1,4 @@
 ![LoopBlox](docs/assets/loopblox-banner.png)
-
-# LoopBlox
-
 [Quick start](#quick-start) · [Write a Loop](CONTROLLER.md) · [Components](COMPONENTS.md) · [Research protocol](experiment.md)
 
 LoopBlox is an open-source research environment for composing agent behavior in Python and letting a research agent improve Loops on the same benchmark. Evaluate complete task outcomes and costs while keeping the tasks, model, tools, and component contracts fixed.
