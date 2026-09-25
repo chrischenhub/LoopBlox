@@ -9,7 +9,7 @@ import collections
 import json
 import pathlib
 
-SCHEMA_VERSION = "segment-semantics-v8"
+SCHEMA_VERSION = "segment-semantics-v11"
 OBSERVATIONS_PER_SEGMENT = 4
 TAIL_REASONING_CALLS_PER_SEGMENT = 4
 _REASONING_COMPONENTS = ("decide", "think_decide", "think", "plan", "decompose", "critique", "reflect", "choose", "judge")
@@ -92,7 +92,31 @@ def _unwrap(value, depth=6):
         try:
             parsed = json.loads(value)
         except ValueError:
-            return value
+            # Code stdout can interleave complete JSON documents with labels.
+            # Unwrap only whole container documents at line boundaries, keeping
+            # every intervening character and the document order as evidence.
+            decoder = json.JSONDecoder()
+            parts, cursor, offset = [], 0, 0
+            for line in value.splitlines(keepends=True):
+                start = offset
+                offset += len(line)
+                if start < cursor or not line.startswith(("{", "[")):
+                    continue
+                try:
+                    document, end = decoder.raw_decode(value, start)
+                except ValueError:
+                    continue
+                if not isinstance(document, (dict, list)) or (end < len(value) and value[end] not in "\r\n"):
+                    continue
+                if start > cursor:
+                    parts.append(value[cursor:start])
+                parts.append(document)
+                cursor = end
+            if not parts:
+                return value
+            if cursor < len(value):
+                parts.append(value[cursor:])
+            return {"text_and_json_parts": parts}
         return _unwrap(parsed, depth - 1) if isinstance(parsed, (dict, list)) else value
     if isinstance(value, dict):
         return {key: _unwrap(item, depth - 1) for key, item in value.items()}
@@ -113,7 +137,8 @@ def _observation(component):
     return component.startswith("observe_")
 
 
-def turns(trace):
+def turns(trace, *, observations_per_segment=OBSERVATIONS_PER_SEGMENT,
+          tail_reasoning_calls_per_segment=TAIL_REASONING_CALLS_PER_SEGMENT):
     """Group four observation-delimited cycles without overlapping executed steps.
 
     A supplementary page or full reread cannot create another environment transition.
@@ -138,12 +163,12 @@ def turns(trace):
                 observed.add(execution)
                 rows.append(current)
                 current = []
-    groups = [list(enumerate(rows[offset:offset + OBSERVATIONS_PER_SEGMENT], offset + 1))
-              for offset in range(0, len(rows), OBSERVATIONS_PER_SEGMENT)]
+    groups = [list(enumerate(rows[offset:offset + observations_per_segment], offset + 1))
+              for offset in range(0, len(rows), observations_per_segment)]
     tail, reasoning_calls = [], 0
     for call in current:
         if call["component"] in _REASONING_COMPONENTS:
-            if reasoning_calls == TAIL_REASONING_CALLS_PER_SEGMENT:
+            if reasoning_calls == tail_reasoning_calls_per_segment:
                 groups.append([(len(rows) + 1, tail)])
                 tail, reasoning_calls = [], 0
             reasoning_calls += 1
@@ -161,7 +186,7 @@ def turns(trace):
         decided, outcomes, notes, reads, failures, completions = [], [], [], [], [], []
         calls = [call for _, cycle in group for call in cycle]
         start = opening
-        goal = dict(initial_user_request=initial_messages or task.get("problem"),
+        goal = dict(initial_user_request=initial_messages or task.get("problem") or task.get("instruction"),
                     latest_user_message_before_segment=latest_message)
         executed = {call["arguments"]["decision"] for call in calls
                     if call["component"] == "execute" and requests[call["id"]]}
@@ -422,7 +447,7 @@ def main():
         trace = destination / "trace.json"
         trace.write_bytes((directory / "trace.json").read_bytes())
         result = analyze_run(trace, configuration=config, meter=meter, scope=f"analysis-{index}")
-        rows = result["segments"]
+        rows = [segment for segment in result["segments"] if segment["status"] != "split"]
         answers = [measurements(segment) for segment in rows]
         per_run.append((destination, record, rows, answers))
         labelled.extend((destination, record, row, answer) for row, answer in zip(rows, answers))

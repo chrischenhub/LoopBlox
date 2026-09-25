@@ -13,7 +13,7 @@ from loopblox.runtime.controller import model_call, model_usage
 from loopblox.runtime import jev as transport
 from loopblox.report import summarize_trace
 from loopblox.runtime.io import atomic_json, digest
-from loopblox.runtime.model import BudgetExhausted
+from loopblox.runtime.model import BudgetExhausted, OperationalProblem
 
 
 def configuration():
@@ -21,6 +21,9 @@ def configuration():
     metadata = transport.configuration(describe_module=__name__)
     return dict(schema_version=SCHEMA_VERSION, observations_per_segment=OBSERVATIONS_PER_SEGMENT,
                 tail_reasoning_calls_per_segment=TAIL_REASONING_CALLS_PER_SEGMENT,
+                input_implementation_sha256=digest(Path(__file__).read_bytes() + b"\0" +
+                                                   Path(__file__).with_name("segments.py").read_bytes()),
+                oversized_segments="Split rejected groups into single observation cycles or tail reasoning calls; never truncate evidence",
                 **metadata, questions_sha256=digest(json.dumps(metadata["questions"], sort_keys=True).encode()))
 
 
@@ -28,7 +31,8 @@ def analyze_run(trace_path, *, configuration, meter, scope):
     """Persist each attempt and finish all segment judgments before releasing a run's feedback."""
     trace_path = Path(trace_path)
     trace_bytes = trace_path.read_bytes()
-    segments = [dict(**segment, status="not_started") for segment in turns(json.loads(trace_bytes))]
+    trace = json.loads(trace_bytes)
+    segments = [dict(**segment, status="not_started") for segment in turns(trace)]
     record = dict(status="running", source_trace=trace_path.name, source_trace_sha256=digest(trace_bytes),
                   configuration=configuration, segments=segments)
     path = trace_path.with_name("jev.json")
@@ -41,8 +45,46 @@ def analyze_run(trace_path, *, configuration, meter, scope):
 
     save()
     try:
-        for segment in segments:
-            body = dict(model=configuration["model"], state=segment["state"],
+        position = 0
+        while position < len(segments):
+            segment = segments[position]
+            position += 1
+            # Factor exact repeated containers and long strings only; references preserve every occurrence.
+            # Keep the original state in the segment and the wire state in each attempt.
+            state = segment["state"]
+            marker = "$evidence_ref"
+            serialized = json.dumps(state, ensure_ascii=False)
+            while marker in serialized:
+                marker += "_"
+            seen = {}
+
+            def pack(value, pointer=""):
+                if isinstance(value, (dict, list, str)):
+                    identity = json.dumps(value, ensure_ascii=False, separators=(",", ":"))
+                    if len(identity) >= 128:
+                        if identity in seen:
+                            return {marker: seen[identity]}
+                        seen[identity] = pointer
+                    if isinstance(value, str):
+                        return value
+                    if isinstance(value, dict):
+                        return {key: pack(item, pointer + "/" + key.replace("~", "~0").replace("/", "~1"))
+                                for key, item in value.items()}
+                    return [pack(item, pointer + "/" + str(index)) for index, item in enumerate(value)]
+                return value
+
+            packed = pack(state)
+            encoding_key = "_evidence_encoding"
+            while encoding_key in state:
+                encoding_key += "_"
+            packed[encoding_key] = (
+                "Lossless repeated evidence encoding: an object with the single key " + marker +
+                " denotes the complete value at its RFC 6901 JSON Pointer in this state. "
+                "Resolve references recursively at every occurrence; repeated evidence retains "
+                "its original position and multiplicity. All other values are literal.")
+            if len(json.dumps(packed, ensure_ascii=False)) < len(serialized):
+                state = packed
+            body = dict(model=configuration["model"], state=state,
                         questions=segment_questions(configuration["questions"], segment["state"]))
             request = dict(role="jev", **body)
             segment.update(status="running", attempts=[])
@@ -60,9 +102,29 @@ def analyze_run(trace_path, *, configuration, meter, scope):
 
             if meter.remaining()["output_tokens"] < configuration["output_reservation"]:
                 raise BudgetExhausted("jev_output_reservation")
-            model_call(meter=meter, scope=f"{scope}:jev:s{segment['index']:04d}", request=request,
-                       max_tokens=configuration["output_reservation"], remaining=meter.remaining,
-                       invoke=invoke, time_origin=meter.started, record_attempt=attempted)
+            try:
+                model_call(meter=meter, scope=f"{scope}:jev:s{segment['index']:04d}", request=request,
+                           max_tokens=configuration["output_reservation"], remaining=meter.remaining,
+                           invoke=invoke, time_origin=meter.started, record_attempt=attempted)
+            except OperationalProblem as error:
+                if error.code != "jev_input_limit":
+                    raise
+                ids = set(segment["ids"])
+                pieces = [piece for piece in turns(trace, observations_per_segment=1,
+                    tail_reasoning_calls_per_segment=1) if set(piece["ids"]).issubset(ids)]
+                if len(pieces) < 2 or set().union(*(set(piece["ids"]) for piece in pieces)) != ids:
+                    raise  # A single oversized observation needs repair, not silent truncation.
+                next_index = max(item["index"] for item in segments) + 1
+                children = [dict(piece, index=next_index + index, parent_segment=segment["index"],
+                                 status="not_started") for index, piece in enumerate(pieces)]
+                indices = {piece["index"]: child["index"] for piece, child in zip(pieces, children)}
+                for child in children:
+                    child["facts"]["identical_repeat_of"] = indices.get(child["facts"]["identical_repeat_of"])
+                segment.update(status="split", children=[item["index"] for item in children],
+                    recovery=dict(route="infra", action="split_segment", code=error.code))
+                segments[position:position] = children
+                save()
+                continue
             segment["status"] = "completed"
             save()
         record["status"] = "completed"
@@ -111,6 +173,8 @@ def feedback(record, artifact, trace):
     """
     segments = []
     for position, segment in enumerate(record["segments"]):
+        if segment["status"] == "split":
+            continue  # Keep parent attempts in raw evidence without counting participation twice.
         ids = set(segment["ids"])
         scoped = dict(
             component_calls=[call for call in trace["component_calls"] if call["id"] in ids],
@@ -119,6 +183,7 @@ def feedback(record, artifact, trace):
         execution = summarize_trace(scoped)
         segments.append(dict(
             index=segment["index"], first_step=segment["first_step"], last_step=segment["last_step"],
+            parent_segment=segment.get("parent_segment"),
             evidence_pointer=f"/segments/{position}", invocation_ids=segment["ids"],
             facts=segment["facts"], **measurements(segment),
             execution=dict(components=execution["components"], tools=execution["tools"],

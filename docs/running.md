@@ -1,11 +1,12 @@
 # Running continuous Loop research
 
+For the active five-task AppWorld continuous experiment, see [AppWorld setup](appworld.md).
+The telecom commands below describe the retained, currently stopped integration.
+
 Updated September 21, 2026. This guide covers environment setup, task preparation,
-commands and output files for τ²-bench telecom research. [experiment.md](../experiment.md)
-defines the [task set and scoring](../experiment.md#task-set-and-scoring),
-[limits and accounting](../experiment.md#limits-and-accounting),
-[selection and checkpoints](../experiment.md#selection-and-checkpoints), and
-[stopping and recovery](../experiment.md#stopping-and-recovery).
+commands and output files for the retained τ²-bench telecom integration. Historical
+campaign snapshots own their telecom protocols. The active
+[experiment.md](../experiment.md) now defines the AppWorld research condition.
 
 Run all commands from the cloned repository root, with Git, Python 3.12, uv,
 curl, tar, and Docker Engine available. Use a macOS or Linux host, or WSL2 with
@@ -50,6 +51,30 @@ workers. Configure the model through `FREEINFERENCE_API_KEY`,
 Create it with `cp .env.example .env` on first setup, then edit the values.
 Use literal absolute paths: this loader does not expand shell variables in `.env`.
 Existing process environment variables take precedence over the file.
+
+The task model adapter explicitly requests high reasoning effort for both agent
+components and simulated-user calls: `reasoning_effort: "high"` on Chat
+Completions, or `reasoning.effort: "high"` on Responses. This fixed setting is
+recorded in campaign model settings; it does not configure Jev or the native
+researcher. Historical frozen campaigns retain their original settings.
+
+Start a full No-user campaign with `run --no-user`. `Tau2Runner(..., solo_mode=True)` uses the
+official task ticket, combined agent/user tool set, DummyUser, solo orchestrator
+and official solo evaluator. The existing isolated Loop worker still owns task
+execution. This path currently requires a ticket and no initial message history;
+it exposes `done` instead of `respond_to_user` and makes no simulated-user model
+calls. The campaign freezes `solo_mode: true` and `user_model: null`, checks all
+ten training tasks before dispatch, and gives the researcher the frozen mode in
+its research question. Recovery inherits the mode. Without `--no-user`, new
+campaigns use the interactive simulator. No-user results are a separate condition
+and must not replace interactive results. New gateway requests ask the provider to
+retain reasoning in the recorded raw response for diagnosis; structured component
+outputs still come from the response body.
+
+Structured component requests disclose the same canonical output schema in the
+model messages and the API response format. Both derive from the supplied schema;
+the host validates that original contract. This avoids relying on the provider's
+constrained decoder alone to explain completion fields to the reasoning model.
 
 Research also requires [Jev setup](jev.md): `TYPESAFE_API_KEY` and
 `typesafe-sdk==0.7.0`, optionally in a separate host interpreter selected by
@@ -200,9 +225,9 @@ and the frozen upstream files. It does not start research or execute task Loops.
 After configuring the model gateway, Jev, Docker and native Codex:
 
 ```sh
-# Freeze code, task suite and settings, then start the continuous researcher
+# Freeze a No-user condition, evaluate a fresh baseline, then start the researcher
 .artifacts/upstream/tau2-bench/.venv/bin/python -B -m loopblox.benchmarks.run_tau2 \
-  run --suite .artifacts/tau2/telecom-suite-NEW --output .artifacts/tau2/research-NEW
+  run --no-user --suite .artifacts/tau2/telecom-suite-NEW --output .artifacts/tau2/research-NEW
 
 # Read live state and refresh report.md / status.json
 python3 -B -m loopblox.benchmarks.run_tau2 status --output .artifacts/tau2/research-NEW
@@ -280,8 +305,11 @@ Run this from the current repository checkout in a separate terminal:
 ```sh
 python3 -B -m loopblox.research.dashboard
 
-# Monitor one campaign, or provide another directory of campaigns
-python3 -B -m loopblox.research.dashboard .artifacts/tau2/research-NEW --port 8767
+# Monitor one AppWorld campaign
+python3 -B -m loopblox.research.dashboard .artifacts/appworld/research-NEW --port 8767
+
+# Or monitor one collection, including historical telecom campaigns
+python3 -B -m loopblox.research.dashboard .artifacts/tau2 --port 8767
 ```
 
 Open [http://127.0.0.1:8767/](http://127.0.0.1:8767/). The local server needs only
@@ -292,14 +320,21 @@ The dashboard follows the website's ink-green palette and pixel typography, usin
 the tracked LoopBlox logo and bundled fonts. These assets are served locally from
 the repository; the monitor does not depend on `site/` or remote font services.
 
-The default directory is `.artifacts/tau2/`. **Follow live experiment** detects
-unclosed continuous telecom campaigns whose recorded local PID still belongs to
-the matching campaign host. It follows the newest confirmed live attempt,
-including newly created recovery directories. A newer stopped or prepared campaign
-does not displace a live one. When no live host is detected, the page says so and
-shows the latest recorded campaign. Process presence confirms liveness, not progress.
-Choose a specific attempt in the selector to keep it fixed. Other historical
-protocols are excluded. **Explore Loops** jumps to the integrated **Loop evolution**
+The default directory is `.artifacts/`; discovery checks immediate campaigns in
+its `appworld/` and `tau2/` collections, plus direct `attempt-*` children of
+AppWorld `*-supervision/` directories. It does not traverse arbitrary nested
+directories. You can also pass one campaign or one collection directory explicitly.
+**Follow live experiment** detects AppWorld and telecom research hosts and AppWorld
+supervisors by validating their recorded local PIDs against the matching process.
+For supervised runs, it follows the supervisor's recorded current-attempt pointer;
+while a new attempt is being prepared, the last available attempt remains visible.
+A live supervisor can keep the research marked live during repair or retry wait
+even when the preceding task attempt has closed. A newer unrelated stopped or
+prepared campaign does not displace a live one. When no live host or supervisor is
+detected, the page says so and shows the latest recorded campaign. Process presence
+confirms liveness, not progress.
+Choose a specific attempt in the selector to keep it fixed. Archived directories
+are outside default discovery. **Explore Loops** jumps to the integrated **Loop evolution**
 section on the same page. It uses the generic visualizer's candidate comparisons,
 source validation and recorded execution diagrams. Choose a task to compare the
 same task across every Loop, then expand Python source, source changes, exact path
@@ -310,15 +345,48 @@ available with the visualization command below.
 
 **Dashboard** is the home page. The **Research** tab at `/research` summarizes the
 selected campaign's research question, candidate history, recorded outcomes and
-research notebook. Both tabs retain the campaign selection and follow-live mode.
+research notebook. All three tabs retain the campaign selection and follow-live mode.
+When the displayed attempt belongs to the current supervised run, all three tabs show
+the supervisor phase, process presence, repair count and any recorded required
+action above the task attempt. Repair and retry wait share a recorded state and
+are labeled together; the dashboard does not infer which is happening. Closed
+attempt outcomes remain closed while supervision continues. The selector names
+nested attempts as their original run and attempt name; selecting a historical
+attempt fixes that view and does not attach the current supervisor's status to it.
+Their campaign header identifies the benchmark, frozen task count and task
+interface from that campaign's records. AppWorld native code-shell runs count
+submitted code blocks; a block may make multiple API calls. Historical telecom
+runs continue to show actions, and each campaign uses its own recorded task set.
 The Research page distinguishes mandatory post-run Jev analysis from optional
 online `judge` invocations, and shows analysis coverage alongside the researcher's
 recorded evidence references. Notes and hypotheses remain attributed researcher
 claims; Jev measurements do not replace official scores or establish why a change
 worked. Its history covers the public records in the selected campaign, including
-inherited completed evaluations, while cumulative usage still includes prior
+inherited completed evaluations, while cumulative gateway usage still includes prior
 recovery attempts. The page summarizes existing evidence without additional model
 calls.
+
+The **Trace** tab at `/trace` joins one candidate's recorded task run to its Jev
+segments. Choose a candidate, task and run, or use **Inspect trace** in the
+Dashboard's task table. Without an explicit selection, it follows the latest
+available analysis. Three linked plots show segment progress, immediate action
+effectiveness and the probability that the approach needs correction. Progress
+is per segment, not cumulative completion; correction need is not recovery
+success. Axes use that run's recorded question scales, so historical schemas
+retain their own ranges. Missing measurements leave gaps and remain selectable.
+
+Segment order follows recorded leaf order, excluding split parent records;
+numeric record IDs may be nonsequential after splitting. Click a plotted point,
+use arrow keys while a point is focused, or choose a segment from the selector
+to inspect its measurements and public evidence. The inspector preserves exact
+Jev responses, full segment evidence, recorded request attempts and component
+invocations in expandable disclosures. Encoded request inputs remain separate
+from original segment evidence. A pinned whole-task result shows Success, Failure
+or Not scored while browsing the plots and segment evidence. Success and Failure
+come only from the official evaluator; unfinished or interrupted runs without a
+score remain Not scored. Jev segment completion is labeled separately.
+Selection and open disclosures survive live refreshes; pending
+analysis shows a waiting state rather than invented measurements.
 
 The page refreshes every three seconds. Connection status means the monitor is
 reachable; campaign state and the recorded local host process are shown separately.
@@ -329,9 +397,16 @@ and mandatory Jev completion have separate counts. Incomplete or interrupted
 batches retain their missing scores and never qualify as evaluated.
 
 Candidate comparisons use the recorded agent usage and host-selected incumbent.
-Campaign usage reuses `campaign.status()` to include failed recovery attempts once,
-with wall time separate from charged time and native researcher usage separate from
-gateway usage. Missing token measurements remain unknown. The server projects
+Campaign gateway usage derives from the selected benchmark's recorded accounting
+to include failed recovery attempts once, with wall time separate from charged
+time. Native researcher usage is displayed separately: AppWorld shows the current
+attempt's recorded native tokens, excluding prior attempts; telecom retains its
+recorded cumulative native usage. Supervisor infrastructure-repair usage remains
+separate from the displayed task, Jev and native researcher totals; it is not
+assumed to be zero. Missing token measurements and charged duration
+remain unknown until recorded. AppWorld start time falls back to the host start
+record's modification time when no start timestamp was saved; wall duration is
+unknown for closed records without a closing timestamp. The server projects
 only aggregate accounting from private ledgers; it never serves their request
 bodies, simulator data or credentials. It reads records directly rather than the
 on-demand `status.json` report. Files are read individually, so a refresh can span

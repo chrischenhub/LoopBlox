@@ -29,6 +29,8 @@ def read(path):
 
 
 def model_settings(client):
+    if client is None:
+        return None
     return {key: getattr(client, key) for key in (
         "model", "base_url", "api", "reasoning_effort", "structured_output", "temperature", "max_tokens", "timeout")}
 
@@ -39,21 +41,24 @@ def evaluation_workers():
     return 3 if os.environ.get("LOOPBLOX_PROVIDER", "freeinference") == "opencode_go" else 1
 
 
-def clients(protocol=None):
+def clients(protocol=None, *, solo_mode=False):
+    if protocol is not None:
+        solo_mode = protocol.get("solo_mode", False)
     client = ChatCompletionsClient.from_env()
-    user = ChatCompletionsClient(client.api_key, client.base_url, client.model,
+    user = None if solo_mode else ChatCompletionsClient(client.api_key, client.base_url, client.model,
                                  temperature=0, max_tokens=2048, timeout=client.timeout, api=client.api)
     if protocol:
         # Pre-Responses campaigns used only serial Chat Completions with JSON
         # Schema; those fixed settings were implicit in their frozen sources.
         defaults = dict(api="chat_completions", reasoning_effort=None, structured_output="json_schema")
         for current, name in ((client, "model"), (user, "user_model")):
-            if model_settings(current) != {**defaults, **protocol[name]}:
+            expected = None if protocol[name] is None else {**defaults, **protocol[name]}
+            if model_settings(current) != expected:
                 raise ValueError("Model settings differ from the frozen campaign")
     return client, user
 
 
-def development_tasks(suite, manifest):
+def development_tasks(suite, manifest, *, solo_mode=False):
     """Validate official membership and deterministic scoring before opening dispatch."""
     development = [task for task in manifest["tasks"] if task["split"] == "development"]
     holdout = [task for task in manifest["tasks"] if task["split"] == "holdout"]
@@ -65,6 +70,11 @@ def development_tasks(suite, manifest):
     groups = {task["group"] for task in development}
     if len(groups) != 10 or groups & {task["group"] for task in holdout}:
         raise ValueError("Development families must be distinct and disjoint from test")
+    if solo_mode:
+        for task in development:
+            initial = task["task"].get("initial_state") or {}
+            if not task["task"].get("ticket") or initial.get("message_history"):
+                raise ValueError("No-user requires an official ticket and no initial message history: " + task["task_id"])
     for task in manifest["tasks"]:
         criteria = task["task"].get("evaluation_criteria") or {}
         basis = set(criteria.get("reward_basis", []))
@@ -148,6 +158,9 @@ def verify(root):
     protocol = read(root / "protocol.json")
     if protocol["kind"] != "continuous_telecom":
         raise ValueError("Not a continuous telecom campaign")
+    solo_mode = protocol.get("solo_mode", False)
+    if type(solo_mode) is not bool or solo_mode != (protocol["user_model"] is None):
+        raise ValueError("Frozen interaction mode and user model disagree")
     if protocol["research_budgets"] != dict(seconds=None, model_calls=None, output_tokens=None, task_runs=None):
         raise ValueError("This continuous protocol requires explicitly uncapped shared research budgets")
     for name, expected in protocol["implementation_sha256"].items():
@@ -156,7 +169,7 @@ def verify(root):
     if digest((root / "suite/manifest.json").read_bytes()) != protocol["suite_manifest_sha256"]:
         raise ValueError("Frozen suite manifest changed")
     manifest = load_suite(root / "suite")
-    if [task["task_id"] for task in development_tasks(root / "suite", manifest)] != protocol["task_ids"]:
+    if [task["task_id"] for task in development_tasks(root / "suite", manifest, solo_mode=solo_mode)] != protocol["task_ids"]:
         raise ValueError("Frozen task IDs changed")
     for name, expected in protocol.get("recovery", {}).get("imported_files", {}).items():
         if digest((root / name).read_bytes()) != expected:
@@ -170,11 +183,14 @@ def verify(root):
 
 
 def prepare(output, *, suite=None, worker_image="python:3.12-slim", previous=None, reason=None,
-            resume_stopped=False, restart_candidate=None):
+            resume_stopped=False, restart_candidate=None, solo_mode=None):
     """Freeze a new attempt; recovery copies originals and starts a fresh researcher."""
     root = Path(output).resolve()
     previous = Path(previous).resolve() if previous else None
     old = verify(previous) if previous else None
+    if old and solo_mode is not None and solo_mode != old.get("solo_mode", False):
+        raise ValueError("Changing interaction mode requires a fresh campaign and baseline")
+    solo_mode = old.get("solo_mode", False) if old else bool(solo_mode)
     if restart_candidate is not None and old is None:
         raise ValueError("A candidate restart requires its previous campaign")
     if old:
@@ -194,11 +210,18 @@ def prepare(output, *, suite=None, worker_image="python:3.12-slim", previous=Non
             restart_candidate=restart_candidate)
     suite = Path(suite).resolve()
     manifest = load_suite(suite)
-    tasks = development_tasks(suite, manifest)
-    client, user = clients(old)
+    tasks = development_tasks(suite, manifest, solo_mode=solo_mode)
+    client, user = clients(old, solo_mode=solo_mode)
     worker = image_id(worker_image)
     configuration = jev.configuration()
     experiment = validate_experiment(read(ROOT / "experiments/tau2.json"))
+    experiment["question"] += (
+        " This campaign uses official No-user (solo) mode: a fixed task ticket, official policy, "
+        "combined agent and user tools, and done. There is no simulated-user model or conversation. "
+        "Private scenarios and evaluator internals remain unavailable."
+        if solo_mode else
+        " This campaign uses the official interactive user simulator; its model calls share task budgets. "
+        "The environment supplies customer messages addressed to the agent.")
     baseline = (ROOT / "controllers/reactive.py").read_text()
     if old and any((configuration != old["jev"], worker != old["worker_image"],
                     evaluation_workers() != old.get("evaluation_workers", 1),
@@ -211,7 +234,7 @@ def prepare(output, *, suite=None, worker_image="python:3.12-slim", previous=Non
         task_ids=[task["task_id"] for task in tasks], worker_image=worker, task_limits=vars(TASK_LIMITS),
         research_budgets=dict(seconds=None, model_calls=None, output_tokens=None, task_runs=None),
         model=model_settings(client), user_model=model_settings(user), experiment=experiment,
-        evaluation_workers=evaluation_workers(),
+        evaluation_workers=evaluation_workers(), solo_mode=solo_mode,
         components=catalog(), baseline_sha256=digest(baseline.encode()), jev=configuration,
         ranking=RANKING_RULE, suite_manifest_sha256=digest((root / "suite/manifest.json").read_bytes()),
         implementation_sha256=snapshot_implementation(root))
@@ -359,13 +382,15 @@ def run(root):
         if evaluation_workers() != protocol["evaluation_workers"]:
             raise ValueError("Evaluation concurrency differs from the frozen campaign")
         manifest = load_suite(root / "suite")
-        development = development_tasks(root / "suite", manifest)
+        development = development_tasks(root / "suite", manifest, solo_mode=protocol.get("solo_mode", False))
         runner = Tau2Runner(root / "suite", {**manifest, "tasks": development}, client, user,
             protocol["worker_image"], Limits(**protocol["task_limits"]), root / "private/environments",
-            recovery_tasks=protocol.get("recovery", {}).get("task_budgets", {}))
+            recovery_tasks=protocol.get("recovery", {}).get("task_budgets", {}),
+            solo_mode=protocol.get("solo_mode", False))
         accounting = status(root)
         session = ResearchSession(output=root / "research", development=tuple(protocol["task_ids"]), run_task=runner,
             worker_image=protocol["worker_image"], setup=dict(model=protocol["model"], user_model=protocol["user_model"],
+                solo_mode=protocol.get("solo_mode", False),
                 expected_researcher=protocol.get("expected_researcher"), prior_accounting=dict(
                     task_runs=accounting["cumulative_task_runs"], usage=accounting["cumulative_usage"],
                     charged_seconds=sum(row["charged_seconds"] for row in accounting["attempts"][:-1]))),

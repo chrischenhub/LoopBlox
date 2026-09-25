@@ -23,6 +23,7 @@ def main():
     run.add_argument("--suite", type=Path, required=True)
     run.add_argument("--output", type=Path, required=True)
     run.add_argument("--worker-image", default="python:3.12-slim")
+    run.add_argument("--no-user", action="store_true", help="Use official solo mode with a fixed ticket and no simulated user")
     recover = commands.add_parser("recover", help="Recover an infrastructure failure in a new directory")
     recover.add_argument("--previous", type=Path, required=True)
     recover.add_argument("--output", type=Path, required=True)
@@ -44,7 +45,7 @@ def main():
                                          development=10, exclude_suites=args.exclude_suite)
         print(json.dumps({"tasks": len(manifest["tasks"]), "manifest": str(Path(args.output) / "manifest.json")}))
     elif args.command in {"run", "recover"}:
-        options = (dict(suite=args.suite, worker_image=args.worker_image) if args.command == "run" else
+        options = (dict(suite=args.suite, worker_image=args.worker_image, solo_mode=args.no_user) if args.command == "run" else
                    dict(previous=args.previous, reason=args.reason, resume_stopped=args.resume_stopped,
                         restart_candidate=args.restart_candidate))
         root = campaign.prepare(args.output, **options)

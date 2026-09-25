@@ -1,6 +1,6 @@
 # LoopBlox: composable component research
 
-Engineering and experiment policy, updated 2026-09-21.
+Engineering and experiment policy, updated 2026-09-23.
 
 - [README.md](README.md) owns the project goal and current status.
 - [experiment.md](experiment.md) owns the current continuous research protocol on one frozen benchmark and its implementation status.
@@ -15,8 +15,8 @@ Engineering and experiment policy, updated 2026-09-21.
 Build an open-source experiment environment for componentizing harness behavior,
 comparing compositions on verifiable tasks, and automatically searching for better
 Loops. Visualization explains components, candidate changes and observed execution.
-TextWorld is retired. The active benchmark is τ²-bench telecom; retail runs are
-historical. Preserve the official telecom evaluator, including action checks where
+TextWorld is retired. The active continuous experiment uses five official AppWorld train tasks with
+the native code shell. τ²-bench telecom is stopped; retail runs are historical. Preserve the official telecom evaluator, including action checks where
 required. Do not substitute
 environment-only scoring for tasks with additional official criteria. Current work
 iterates Loops on the same frozen benchmark under experiment.md. Random search,
@@ -124,19 +124,23 @@ serially, stop on the first failure, and retain the attempted prefix when interr
 No implicit tool replay or rollback. Ordinary tool failures allow caller recovery;
 effects remain `none`, `applied` or `unknown` as actually reported.
 
-The fixed model gateway retries `model_timeout` without a fixed retry-count cap
-while charged-time, model-call and output budgets admit another exact attempt.
+The fixed model gateway permits at most three exact retries per logical request
+(four attempts total), while charged-time, model-call and output budgets admit
+another attempt. `loopblox/runtime/controller.py::MAX_MODEL_RETRIES` owns the cap.
+Retry exhaustion preserves the original operational failure for infra diagnosis.
 Recognized no-effect timeout attempts and their two-second retry waits do not
 consume task or ancestor research time. Record their actual wait duration on the
 attempt; deadlines and usage summaries derive the exclusion from those records.
 Structured HTTP 429 errors with provider code `concurrency_limit_exceeded` are
 recognized separately and retry after 60 seconds on each occurrence while budgets
 admit another exact attempt. Their elapsed request and retry-wait time remains
-charged. Other recognized transient faults permit one exact retry, waiting two
+charged. Other recognized transient faults use the same three-retry cap, waiting two
 seconds; their elapsed time remains charged. Only faults with no effects qualify.
 Messages, schema and requested output allowance stay identical;
 every attempt is charged. Unknown usage stays unknown and reserves the requested
-allowance. Host faults, operational failures, candidate errors, exhaustion and
+allowance. An explicitly uncapped request has no finite reservation: missing charged
+output stays null. A finite ancestor output budget imposes a finite request allowance
+at admission. Host faults, operational failures, candidate errors, exhaustion and
 verifier failure remain distinct.
 If budget or time cannot admit the exact retry, retain the original operational
 failure. Exhaustion before an initial attempt remains budget exhaustion.
@@ -147,10 +151,11 @@ charged but not delivered to the controller. Client request timeouts remain
 operational failures. Interrupted attempts retain their charged calls and
 unknown-usage allowance; do not assume an interruption was a timeout.
 General τ² task defaults are 900 charged seconds, owned by DEFAULT_TASK_LIMITS
-in loopblox/benchmarks/tau2.py. The accepted continuous campaign uses
+in loopblox/benchmarks/tau2.py. The historical telecom continuous campaign uses
 `loopblox/research/campaign.py::TASK_LIMITS`: 900 charged seconds, 60 actions,
 256 combined agent/user model attempts and 65,536 output tokens per task. Shared
-research limits are explicitly null. experiment.md owns this accepted protocol. Record every attempt and actual usage. This does not
+research limits are explicitly null. Historical snapshots own that telecom protocol. The active AppWorld condition has
+uncapped task and shared budgets, as specified in experiment.md. Record every attempt and actual usage. This does not
 remove per-request transport deadlines/output settings, isolation, fault handling,
 the frozen task/batch design or the pause before final comparison. Keep wall duration separate from charged duration
 in results and use charged duration when subtracting recovery spend. Historical
@@ -159,7 +164,13 @@ Provider-reported length truncation is task output exhaustion only when reported
 usage consumes the task's remaining output allowance. Other invalid responses
 remain operational failures; do not infer truncation from malformed JSON alone.
 Bound the entire HTTP request, including response-body reads, with the existing
-process deadline mechanism. Socket inactivity timeouts alone are insufficient.
+process deadline mechanism. Streaming Chat Completions may renew this deadline
+only on nonempty text, reasoning or tool-function deltas, never heartbeats,
+roles, IDs or usage events. AppWorld freezes streaming as a model setting and uses
+a 60-second generation-inactivity timeout. Preserve exact SSE data, including
+partial failures; deliver only complete responses to the Loop. Existing frozen
+campaigns and the nonstreaming Responses adapter retain their original deadlines.
+Socket inactivity timeouts alone are insufficient.
 The trusted HTTP transport process is separate from the isolated candidate worker.
 
 ## 4. Research episode
@@ -193,8 +204,8 @@ The historical retail campaign uses official train[:30] in three ordered,
 non-overlapping batches of ten, and all official test tasks after research closes.
 Its exact task selection includes related families, NL grading, handoffs and
 empty-environment-score cases; retain the audits and disclose these scope changes.
-The current protocol uses ten audited official telecom training tasks and keeps
-official test outside research. Any final evaluation needs separate review and
+The current protocol uses five audited official AppWorld training tasks and keeps
+official test outside research. Historical telecom campaigns retain their ten-task selection. Any final evaluation needs separate review and
 authorization. Freeze selection, exclusions and known exposure before execution.
 The domain pivot requires a new campaign; it is not recovery of the retail study.
 The telecom research entry point must reject tasks that require model-based grading before
@@ -216,7 +227,7 @@ dispatch, while retaining all deterministic official scoring requirements.
    rationale immutably. Duplicate sources reuse their original IDs and evidence;
    they cannot be evaluated again. The researcher may inspect records, revise
    hypotheses and write notes freely inside this candidate allowance.
-4. Freeze every new source and evaluate it once on all ten tasks with fresh
+4. Freeze every new source and evaluate it once on the entire frozen task set with fresh
    workers, the same task admission order and the same limits. Freeze provider-specific
    evaluation concurrency under experiment.md; completion order does not reorder records. Rotate admission order when
    two candidates share a batch. Preserve failures, interruptions, missing scores
@@ -290,6 +301,30 @@ actions or submission. A failed researcher stops the episode; budget exhaustion 
 fallback behavior. Final-evaluation and comparison infrastructure faults stop further
 dispatch, retain the original failure and usage, and must not produce a complete result.
 
+For new continuous AppWorld implementations, `experiment.md` authorizes the serial
+infra supervisor after that closure. `research/failures.py` owns routing: ordinary
+task failures, candidate errors and task budget exhaustion continue the scored,
+analyzed batch to the researcher; infrastructure faults go to the isolated repair
+worker; missing global budget, access or repair authority requires human input.
+`research/infra.py::EDITABLE` owns its function-body repair boundary. Preserve
+component contracts, models, budgets, scoring, questions, task data and old records.
+Only a checked repair creates a new implementation and recovery directory. Native
+repair spend is retained separately. Jev v11 retains the v10 fallback that splits oversized groups into full
+single-cycle evidence; retain parent failures and account for leaf measurements
+without double counting. Never use Jev as a prerequisite for routing its own failure.
+
+For the current unattended AppWorld reliability test, a checked repair that may
+change participant inputs, outputs, feedback, segmentation or request policy starts
+a new condition automatically: fresh baseline, candidates, labels, checkpoints and
+researcher conversation. No per-change human confirmation is required within the
+approved repair scope. The host owns this decision; only explicit cleanup-only
+edits may preserve a condition, and uncertainty means restart. Preserve repaired
+infra and operational provenance, but import no prior research evidence. A known
+recurring fault cannot use an unchanged restart or repeat an already failed repair.
+Internal cancellation must not become a user stop; cleanup preserves original
+faults and usage. Online Judge input rejection is a catchable candidate error;
+post-run Jev input rejection is an infra fault.
+
 Historical inheritance, continual-improvement conditions and cross-domain studies
 are retired. Their exact code is preserved in the workflow archive; their
 protocols remain in the historical documents. New campaigns import no old
@@ -362,7 +397,11 @@ dependencies. Audit each task's actual reward basis and empty-trajectory result
 before selection; group related variants and exclude integration groups from the
 main dataset. Frozen task files take precedence over upstream summary prose.
 
-For τ², retain the official policies, tools, user simulator, conversation state
+For τ², freeze the interaction mode in the campaign. The accepted No-user revision
+uses the official solo policy, fixed ticket, combined agent/user tools, DummyUser,
+solo state machine and solo evaluator, with no user-model calls. Start a fresh
+baseline and import no historical candidates or results when changing modes.
+Interactive campaigns retain the official policies, tools, user simulator, conversation state
 machine and evaluator. Each task gets fresh environment/user state and an isolated
 controller worker. Simulated-user and agent calls share the task and research
 budgets; expose only messages addressed to the agent, never private user scenarios,
@@ -370,7 +409,11 @@ user-tool trajectories or evaluator internals. Store environment model requests 
 host-private ledgers, outside researcher-readable evaluation directories. Unknown
 prices remain unknown. Authoritative scoring starts only after the worker closes.
 
-SpreadsheetBench 2 and Terminal-Bench are not integrated yet. The obsolete
+SpreadsheetBench 2 and Terminal-Bench are not integrated yet. AppWorld integration
+is documented in `docs/appworld.md`; `experiment.md` owns its active five-task
+continuous RSI protocol. The user authorized a fresh baseline, native code shell,
+no imported evidence and no fixed stopping round. Prior pilot artifacts are archived.
+This does not resume telecom research. The obsolete
 SWE-bench adapter and launcher have been removed and must not be presented as the
 selected benchmark. `ResearchSession`
 accepts a host-provided task runner.

@@ -14,14 +14,15 @@ from loopblox.runtime.io import atomic_text, digest
 
 def public_directory(path):
     path = Path(path).resolve()
-    if (path / 'research/public').is_dir():
-        return path / 'research/public', path
+    for directory in ('research', 'evaluation'):
+        if (path / directory / 'public').is_dir():
+            return path / directory / 'public', path
     if (path / 'public').is_dir():
         return path / 'public', path.parent
     if path.name == 'public' and (path / 'candidates').is_dir():
-        protected = path.parent.parent if path.parent.name == 'research' else path
+        protected = path.parent.parent if path.parent.name in ('research', 'evaluation') else path
         return path, protected
-    raise ValueError('Expected a campaign directory, research directory, or research/public directory.')
+    raise ValueError('Expected a campaign, research/evaluation, or public evidence directory.')
 
 
 def execution_patterns(trace):
@@ -59,7 +60,7 @@ def execution_patterns(trace):
     return dict(patterns=patterns, order=order, trace_status=trace['status'])
 
 
-def read_campaign(public, task=None):
+def read_campaign(public, task=None, *, include_execution=True):
     """Read only public, individually atomic records. Reports never refresh the host."""
     public = Path(public).resolve()
     provenance = {}
@@ -113,7 +114,7 @@ def read_campaign(public, task=None):
         trace_path = None
         if selected_run:
             trace_path = f'evaluations/{evaluation["evaluation_id"]}/{selected_run["directory"]}/trace.json'
-            trace = read(trace_path, optional=True)
+            trace = read(trace_path, optional=True) if include_execution else None
             if trace is not None:
                 path_data = execution_patterns(trace)
         scored = sum(r.get('verification_verdict') in ('pass', 'fail') for r in rows)
@@ -145,12 +146,12 @@ def number(value):
     return f'{value:,}' if value is not None else 'Unknown'
 
 
-def render_execution(execution, reference, *, details_key='path-order'):
-    if execution is None:
-        return '<p class="empty">No trace recorded for this task yet.</p>'
-    previous = {str(name) for p in (reference or {}).get('patterns', []) for name, _ in p['sequence']}
-    # Merge observed sequences into a display spine. This aligns recorded calls;
-    # the edges below are counted from recordings, never implied by spine order.
+def spine_and_edges(execution):
+    """Merge observed sequences into a display spine and count recorded transitions.
+
+    The spine only aligns recorded calls; the edges are counted from recordings,
+    never implied by spine order.
+    """
     sequences = [[(str(name), status) for name, status in p['sequence']] for p in execution['patterns']]
     spine = []
     for sequence in sequences:
@@ -180,6 +181,21 @@ def render_execution(execution, reference, *, details_key='path-order'):
         if row['repeat'] > 1:
             edges[indices[-1], indices[0]] += row['repeat'] - 1
         last = indices[-1]
+    return spine, edges
+
+
+def render_execution(execution, reference, *, details_key='path-order'):
+    if execution is None:
+        return '<p class="empty">No trace recorded for this task yet.</p>'
+    previous = {str(name) for p in (reference or {}).get('patterns', []) for name, _ in p['sequence']}
+    spine, edges = spine_and_edges(execution)
+    # Transitions are compared by component name: each trace has its own spine,
+    # so spine positions are not comparable between candidates.
+    reference_edges = set()
+    if reference is not None:
+        reference_spine, reference_counts = spine_and_edges(reference)
+        reference_edges = {(reference_spine[a][0], reference_spine[b][0]) for a, b in reference_counts}
+    busiest = max(edges.values(), default=1)
     skips = [(a, b) for a, b in edges if b != a + 1]
     lanes = {edge: i for i, edge in enumerate(skips)}
     margin = 28 + 14 * len(skips)
@@ -201,8 +217,11 @@ def render_execution(execution, reference, *, details_key='path-order'):
             tip = edge + (4 if backwards else -4)
             arrow = f'M{xb-3} {tip}L{xb} {edge}L{xb+3} {tip}'
             tx, ty = (xa + xb) / 2, lane - 5
-        graph.append(f'<path class="graph-edge" d="{path}"/><path class="graph-edge" d="{arrow}"/>'
-                     f'<text class="edge-count" x="{tx}" y="{ty}">{count}</text>')
+        fresh = ' new' if reference is not None and (spine[a][0], spine[b][0]) not in reference_edges else ''
+        stroke = f'stroke-width:{1 + 2.2 * count / busiest:.1f}px'
+        graph.append(f'<path class="graph-edge{fresh}" style="{stroke}" d="{path}"/>'
+                     f'<path class="graph-edge{fresh}" style="{stroke}" d="{arrow}"/>'
+                     f'<text class="edge-count{fresh}" x="{tx}" y="{ty}">{count}</text>')
     for i, (name, status) in enumerate(spine):
         changed = reference is not None and name not in previous
         classes = 'graph-node' + (' added' if changed else '') + (' incomplete' if status != 'completed' else '')
@@ -228,6 +247,76 @@ def render_execution(execution, reference, *, details_key='path-order'):
             + f'<p class="path-order">{order or "No component invocations yet."}</p></details>')
 
 
+def candidate_status(c, incumbent):
+    checkpoint = c['checkpoint']
+    if c['id'] == incumbent:
+        return 'Current best'
+    if c['iteration'] == 0:
+        return 'Starting point'
+    if checkpoint:
+        return 'Selected this round' if checkpoint['incumbent'] == c['id'] else 'Not selected'
+    return 'Evaluated' if c['feedback_ready'] else c['evaluation_status'].replace('_', ' ').capitalize()
+
+
+def render_task_dots(c):
+    """One cell per planned task, in recorded order: the same bar in strip and card."""
+    cells = ''.join(f'<span class="task-dot {label(t["verdict"] or "pending")}" '
+                    f'title="{label(t["task_id"])}: {label(t["verdict"] or t["status"])}"></span>' for t in c['tasks'])
+    if not cells:
+        return '<div class="task-dots empty-dots">No task records yet</div>'
+    summary = (f'{c["passed"]} passed, {c["scored"] - c["passed"]} failed, '
+               f'{c["planned"] - c["scored"]} not scored, of {c["planned"]} planned tasks')
+    return f'<div class="task-dots" role="img" aria-label="{label(summary)}">{cells}</div>'
+
+
+def compared_with(c, previous):
+    """Recorded difference against the round-start incumbent, only when comparable."""
+    if not (previous and c['feedback_ready'] and previous['feedback_ready']
+            and [t['task_id'] for t in c['tasks']] == [t['task_id'] for t in previous['tasks']]):
+        return None
+    before, after = previous['agent_input_tokens'], c['agent_input_tokens']
+    share = (after / before - 1) * 100 if before and after is not None else None
+    return c['passed'] - previous['passed'], share
+
+
+def render_candidate_summary(data):
+    """One row per Loop, so candidates can be compared without scrolling the cards."""
+    candidates = data['candidates']
+    if not candidates:
+        return ''
+    indexed = {c['id']: c for c in candidates}
+    incumbent = data['progress'].get('incumbent')
+    peak = max([c['agent_input_tokens'] for c in candidates if c['agent_input_tokens']], default=0)
+    rows = []
+    for c in candidates:
+        compared = compared_with(c, indexed.get(c['reference']))
+        if c['reference'] is None:
+            delta = '<span class="delta flat">No parent</span>'
+        elif compared is None:
+            delta = '<span class="delta flat">Not comparable yet</span>'
+        else:
+            difference, share = compared
+            direction = 'up' if difference > 0 else 'down' if difference < 0 else 'flat'
+            delta = (f'<span class="delta {direction}">{difference:+d} pass</span>'
+                     + (f'<span class="delta-sub">{share:+.1f}% input</span>' if share is not None else ''))
+        tokens = c['agent_input_tokens']
+        bar = (f'<span class="token-bar"><span style="width:{tokens / peak * 100:.1f}%"></span></span>'
+               if tokens and peak else '')
+        stage = 'Baseline' if c['iteration'] == 0 else f'Round {c["iteration"]:02d}'
+        rows.append(
+            f'<tr class="{"current" if c["id"] == incumbent else ""}">'
+            f'<td><a href="#loop-{label(c["id"])}"><b>{label(c["id"])}</b></a>'
+            f'<span class="row-sub">{stage}</span></td>'
+            f'<td>{render_task_dots(c)}</td>'
+            f'<td class="num">{c["passed"]}<small>/{c["scored"]}</small></td>'
+            f'<td>{delta}</td>'
+            f'<td class="num">{number(tokens)}{bar}</td>'
+            f'<td><span class="row-status">{label(candidate_status(c, incumbent))}</span></td></tr>')
+    return ('<div class="loop-summary"><table><thead><tr><th>Loop</th><th>Task results</th>'
+            '<th class="num">Passed</th><th>Versus parent</th><th class="num">Agent input tokens</th>'
+            f'<th>Selection</th></tr></thead><tbody>{"".join(rows)}</tbody></table></div>')
+
+
 def render_candidate_cards(data):
     """Render the same recorded Loop evidence for live and standalone views."""
     indexed = {c['id']: c for c in data['candidates']}
@@ -237,12 +326,12 @@ def render_candidate_cards(data):
         task_key = label(f'task-{data["task"]}:{c["id"]}')
         previous = indexed.get(c['reference'])
         stage = 'Baseline' if c['iteration'] == 0 else f'Round {c["iteration"]:02d}'
-        current = c['id'] == data['progress'].get('incumbent')
-        checkpoint = c['checkpoint']
-        selected = checkpoint and checkpoint['incumbent'] == c['id']
-        status = ('Current best' if current else 'Starting point' if c['iteration'] == 0 else 'Selected this round' if selected else
-                  'Not selected' if checkpoint else 'Evaluated' if c['feedback_ready'] else
-                  c['evaluation_status'].replace('_', ' '))
+        incumbent = data['progress'].get('incumbent')
+        current = c['id'] == incumbent
+        status = candidate_status(c, incumbent)
+        # Only the current best and the newest Loop open by default; the live page
+        # keeps whatever the reader opened across refreshes.
+        expanded = current or c is data['candidates'][-1]
         if not c['planned']:
             score, score_note = '—', 'Awaiting evaluation'
         else:
@@ -261,32 +350,31 @@ def render_candidate_cards(data):
         counts = Counter(str(name) for p in (c['execution'] or {}).get('patterns', [])
                          for occurrence in p['occurrences'] for name, _ in p['sequence'])
         invocation_counts = ', '.join(f'{label(name)} × {count}' for name, count in counts.items()) or 'No recorded calls for the displayed task.'
-        comparable = (previous and c['feedback_ready'] and previous['feedback_ready']
-                      and [t['task_id'] for t in c['tasks']] == [t['task_id'] for t in previous['tasks']])
-        if comparable:
-            difference = c['passed'] - previous['passed']
+        compared = compared_with(c, previous)
+        if compared is not None:
+            difference, share = compared
             observed = f'{difference:+d} passed tasks versus {previous["id"]}.'
-            before, after = previous['agent_input_tokens'], c['agent_input_tokens']
-            if before and after is not None:
-                observed += f' Agent input changed by {(after / before - 1) * 100:+.1f}%.'
+            if share is not None:
+                observed += f' Agent input changed by {share:+.1f}%.'
         elif c['feedback_ready']:
             observed = f'{c["passed"]} of {c["scored"]} tasks passed in the recorded evaluation.'
         else:
             observed = f'{c["scored"]} of {c["planned"]} tasks scored. Complete evaluation feedback is not available yet.' if c['planned'] else 'Evaluation has not started.'
-        dots = ''.join(f'<span class="task-dot {label(t["verdict"] or "pending")}" title="{label(t["task_id"])}: {label(t["verdict"] or t["status"])}">'
-                       + ('●' if t['verdict'] == 'pass' else '×' if t['verdict'] == 'fail' else '·') + '</span>' for t in c['tasks'])
         cards.append(f'''<article id="loop-{key}" class="candidate{' selected' if current else ''}">
 <header class="candidate-head"><div class="candidate-identity"><span class="eyebrow">{stage}</span><h2>{label(c['id'])}</h2><p>{comparison}</p></div><div class="evaluation">
-<div class="score-row"><strong>{score}</strong><span>{label(status)}</span></div>{f'<p class="score-note">{score_note}</p>' if not c['feedback_ready'] else ''}<div class="task-dots">{dots}</div>
+<div class="score-row"><strong>{score}</strong><span>{label(status)}</span></div>{f'<p class="score-note">{score_note}</p>' if not c['feedback_ready'] else ''}{render_task_dots(c)}
 <dl class="cost"><div><dt>Agent input tokens</dt><dd>{number(c['agent_input_tokens'])}</dd></div><div><dt>Model attempts</dt><dd>{number(c['agent_model_calls'])}</dd></div></dl></div></header>
+<details class="candidate-body" data-key="{key}:body"{' open' if expanded else ''}><summary>Recorded path, hypothesis and source</summary>
 <section class="path-section">{render_execution(c['execution'], previous['execution'] if previous else None, details_key=f'task-{data["task"]}:{c["id"]}:path-order')}</section>
 <section class="description"><div><h3>Hypothesis <small>researcher rationale</small></h3><p>{label(excerpt)}</p>
 <details data-key="{key}:rationale"><summary>Full rationale</summary><pre>{label(c['rationale'])}</pre></details></div><div><h3>Observed <small>evaluation results</small></h3><p>{label(observed)}</p>
 <details data-key="{task_key}:invocation-counts"><summary>Invocation counts · displayed task</summary><p class="observed-counts">{invocation_counts}</p></details></div></section>
 <div class="candidate-details"><details data-key="{key}:source"><summary>Python source</summary><pre>{label(c['source'])}</pre></details>
 {f'<details data-key="{key}:diff"><summary>Source changes</summary><pre>{label(diff or "No source difference.")}</pre></details>' if previous else ''}
-<details data-key="{key}:outcomes"><summary>Task outcomes</summary><div class="table-scroll"><table><thead><tr><th>Task</th><th>Official score</th><th>Execution</th><th>Jev</th></tr></thead><tbody>{task_rows}</tbody></table></div></details></div></article>''')
-    return ''.join(cards) or '<p class="empty">No saved candidates yet.</p>'
+<details data-key="{key}:outcomes"><summary>Task outcomes</summary><div class="table-scroll"><table><thead><tr><th>Task</th><th>Official score</th><th>Execution</th><th>Jev</th></tr></thead><tbody>{task_rows}</tbody></table></div></details></div></details></article>''')
+    if not cards:
+        return '<p class="empty">No saved candidates yet.</p>'
+    return render_candidate_summary(data) + ''.join(cards)
 
 
 def render_report(data):
@@ -307,7 +395,7 @@ def render_report(data):
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument('campaign', type=Path, help='Campaign, research, or research/public directory')
+    parser.add_argument('campaign', type=Path, help='Campaign, research/evaluation, or public evidence directory')
     parser.add_argument('--output', type=Path, required=True, help='Standalone HTML outside the campaign directory')
     parser.add_argument('--task', help='Task whose actual paths appear in every candidate card; defaults to the first frozen task')
     args = parser.parse_args()
@@ -354,6 +442,30 @@ p { color:var(--muted); }
 .legend { font:12px/1.7 var(--mono); max-width:1050px; margin-bottom:24px; }
 .legend strong { color:var(--amber); font-weight:400; }
 .cards { display:grid; gap:24px; }
+.loop-summary { min-width:0; overflow-x:auto; border:1px solid var(--line); background:var(--panel); margin-bottom:24px; }
+.loop-summary table { font:12px/1.6 var(--mono); }
+.loop-summary th { padding:11px 16px; background:#1a2a21; white-space:nowrap; }
+.loop-summary td { padding:12px 16px; vertical-align:middle; }
+.loop-summary tbody tr:last-child td { border-bottom:0; }
+.loop-summary tr.current td { background:#1a3027; }
+.loop-summary a { color:var(--text); text-decoration:none; }
+.loop-summary a:hover b { color:var(--green); }
+.loop-summary b { font-weight:400; font-size:13px; }
+.loop-summary .row-sub { display:block; margin-top:3px; color:var(--muted); font-size:10px; }
+.loop-summary .num { text-align:right; font-variant-numeric:tabular-nums; }
+.loop-summary .num small { color:var(--muted); }
+.loop-summary .delta { font-size:12px; }
+.loop-summary .delta.up { color:var(--green); }
+.loop-summary .delta.down { color:#d5a493; }
+.loop-summary .delta.flat { color:var(--muted); }
+.loop-summary .delta-sub { display:block; margin-top:3px; color:var(--muted); font-size:10px; }
+.loop-summary .token-bar { display:block; height:3px; margin-top:6px; background:#2b3b33; }
+.loop-summary .token-bar span { display:block; height:100%; background:#6b8f79; }
+.loop-summary .row-status { color:var(--muted); }
+.loop-summary tr.current .row-status { color:var(--green); }
+.candidate-body { border-top:0; padding:0; }
+.candidate-body > summary { padding:11px 26px; border-bottom:1px solid var(--line); color:var(--muted); }
+.candidate-body[open] > summary { color:var(--text); }
 .candidate { min-width:0; background:var(--panel); border:1px solid var(--line); }
 .candidate.selected { border-color:var(--green); }
 .candidate-head { display:grid; grid-template-columns:minmax(200px,1fr) minmax(450px,1fr); gap:24px; padding:22px 26px; border-bottom:1px solid var(--line); align-items:center; }
@@ -370,15 +482,18 @@ p { color:var(--muted); }
 .cost div { display:flex; justify-content:space-between; gap:10px; }
 .cost dt { color:var(--muted); }
 .cost dd { margin:0; }
-.task-dots { display:flex; gap:5px; flex-wrap:wrap; grid-column:1; }
-.task-dot { display:flex; align-items:center; justify-content:center; width:14px; height:14px; border:1px solid #856a59; color:#d5a493; font:11px var(--mono); }
-.task-dot.pass { border-color:#527e65; color:var(--green); font-size:7px; }
-.task-dot.pending { color:var(--muted); border-color:var(--line); }
+.task-dots { display:flex; gap:2px; flex-wrap:wrap; grid-column:1; }
+.task-dot { width:10px; height:18px; background:#2b3b33; }
+.task-dot.pass { background:var(--green); }
+.task-dot.fail { background:#d5a493; }
+.empty-dots { font:11px var(--mono); color:var(--muted); }
 .path-section { padding:16px 26px 8px; }
 .graph-scroll { overflow-x:auto; padding:6px 0; }
 .graph-scroll:focus-visible,summary:focus-visible { outline:2px solid var(--green); outline-offset:3px; }
 .execution-graph { display:block; width:100%; height:auto; margin:0; }
 .graph-edge { fill:none; stroke:#6b8f79; stroke-width:1.1; }
+.graph-edge.new { stroke:var(--amber); }
+.edge-count.new { fill:var(--amber); }
 .edge-count { font:10px var(--mono); text-anchor:middle; fill:var(--muted); paint-order:stroke; stroke:#15231b; stroke-width:4px; }
 .graph-node rect { fill:#203127; stroke:#4d6657; }
 .graph-node text { font:11px var(--mono); fill:var(--text); text-anchor:middle; }
@@ -423,7 +538,7 @@ footer { margin-top:30px; border-top:1px solid var(--line); padding-top:18px; fo
 <header><span class="eyebrow">LoopBlox / research visualization</span><h1>Watch the Loop evolve.</h1><p class="intro">Saved candidates, recorded execution paths, and the evidence behind each selection.</p></header>
 <div class="meta"><span>__TITLE__</span><span>Campaign: __STATUS__</span><span>Snapshot: __DATE__</span><span>Path example: __TASK__</span></div>
 <section aria-label="Incumbent history"><span class="eyebrow">Best Loop at each completed round</span><ol class="rail">__RAIL__</ol></section>
-<p class="legend">Each card diagrams recorded transitions on the same task. <strong>Amber marks components absent from the comparison trace.</strong> Lines show observed routes, with transition counts; they do not infer source-code conditions. Exact path order is available below each diagram.</p>
+<p class="legend">Each card diagrams recorded transitions on the same task; line weight follows the recorded count. <strong>Amber marks components and transitions absent from the comparison trace.</strong> Lines show observed routes, with transition counts; they do not infer source-code conditions. Exact path order is available below each diagram.</p>
 <div class="cards">__CARDS__</div>
 <p class="footnote">Scores and costs cover each candidate’s recorded evaluation; diagrams and invocation counts cover only the displayed task. Agent costs exclude simulated users, post-run Jev and researcher usage. Unknown usage stays unknown. Incomplete batches cannot establish a new best Loop. Selection comes from host records. Researcher hypotheses and notes are claims; invocation counts and differences between runs do not establish causality. Recovery attempts are outside these per-candidate totals.</p>
 <section class="notes"><h2>Research notes</h2>__NOTES__</section>

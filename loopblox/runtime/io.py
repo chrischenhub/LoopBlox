@@ -14,6 +14,10 @@ from contextvars import ContextVar
 _cancellation = ContextVar("host_cancellation", default=None)
 
 
+class EvaluationCancelled(Exception):
+    """Internal dispatch cancellation, never a user interrupt."""
+
+
 @contextmanager
 def cancellation_scope(event):
     token = _cancellation.set(event)
@@ -26,7 +30,7 @@ def cancellation_scope(event):
 def check_cancelled():
     event = _cancellation.get()
     if event is not None and event.is_set():
-        raise KeyboardInterrupt("evaluation_cancelled")
+        raise EvaluationCancelled("evaluation_cancelled")
 
 
 def cancel_dispatch():
@@ -66,8 +70,12 @@ def atomic_json(path: Path, value: dict) -> None:
     atomic_text(path, json.dumps(value, ensure_ascii=False, indent=2) + "\n")
 
 
-def run_process(arguments, *, timeout: float, **kwargs) -> subprocess.CompletedProcess:
-    """Bound the whole process tree, including shells and their child commands."""
+def run_process(arguments, *, timeout: float | None, on_output=None, **kwargs) -> subprocess.CompletedProcess:
+    """Bound a process tree; an output callback may renew the deadline on progress.
+
+    The callback receives newly captured stdout bytes and returns whether meaningful
+    progress occurred. Merely receiving bytes does not renew the deadline.
+    """
     input_text = kwargs.pop("input", None)
     if kwargs.pop("capture_output", False):
         kwargs["stdout"] = subprocess.PIPE
@@ -76,18 +84,35 @@ def run_process(arguments, *, timeout: float, **kwargs) -> subprocess.CompletedP
         kwargs["stdin"] = subprocess.PIPE
     check_cancelled()
     process = subprocess.Popen(arguments, start_new_session=True, **kwargs)
-    deadline = time.monotonic() + max(0.001, timeout)
+    deadline = None if timeout is None else time.monotonic() + max(0.001, timeout)
+    output_cursor = 0
+
+    def observe(output):
+        nonlocal output_cursor, deadline
+        if on_output is None:
+            return
+        data = output.encode(kwargs.get("encoding") or "utf-8") if isinstance(output, str) else output or b""
+        if len(data) > output_cursor:
+            progress = on_output(data[output_cursor:])
+            output_cursor = len(data)
+            if progress and timeout is not None:
+                deadline = time.monotonic() + timeout
+
     try:
         while True:
             check_cancelled()
-            remaining = deadline - time.monotonic()
+            remaining = None if deadline is None else max(0.001, deadline - time.monotonic())
             try:
-                interval = min(0.25, remaining) if _cancellation.get() is not None else remaining
-                stdout, stderr = process.communicate(input=input_text, timeout=max(0.001, interval))
+                interval = remaining
+                if _cancellation.get() is not None or on_output is not None:
+                    interval = 0.25 if remaining is None else min(0.25, remaining)
+                stdout, stderr = process.communicate(input=input_text, timeout=interval)
+                observe(stdout)
                 break
-            except subprocess.TimeoutExpired:
+            except subprocess.TimeoutExpired as error:
                 input_text = None  # communicate retains unsent input across timeout polls.
-                if time.monotonic() >= deadline:
+                observe(error.output)
+                if deadline is not None and time.monotonic() >= deadline:
                     raise
         return subprocess.CompletedProcess(arguments, process.returncode, stdout, stderr)
     except BaseException:

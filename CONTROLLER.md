@@ -344,11 +344,11 @@ contain many decision/tool iterations. No fixed round count is required.
 Actual tool effects, task termination, and hidden verification remain distinct.
 The worker closes before sealed scoring; no evaluator feedback reaches that
 completed controller. An ordinary failed tool can prompt recovery. The fixed
-model gateway retries `model_timeout` without a fixed retry-count cap, within the
-charged-time, model-call and output budgets. `concurrency_limit_exceeded` also
-retries within those budgets without a fixed retry-count cap, waiting 60 seconds
-on each occurrence; its request and wait time remains charged. Other recognized
-transient failures allow one exact retry. Recognized no-effect timeout attempts and their retry waits
+model gateway permits at most three exact retries per logical request (four
+attempts total), within the charged-time, model-call and output budgets.
+`concurrency_limit_exceeded` waits 60 seconds; other recognized transient faults
+wait two seconds. Exhaustion preserves the operational error for infra diagnosis.
+Recognized no-effect timeout attempts and their retry waits
 are excluded from task and research time, with their actual duration retained in
 the ledger. Successful requests and other work still consume time.
 Only failures with no effects qualify; retries other than concurrency limits wait two seconds;
@@ -356,10 +356,16 @@ every attempt consumes model-call and output budget. If the remaining budget can
 retry, the original operational failure remains the outcome. Exhaustion before
 any attempt remains budget exhaustion. Controller recovery issues new decisions or
 fresh rule actions, never replays an attempted model action ID.
-The complete HTTP request has its own wall-clock deadline, even when less charged
-task time remains. A successful response that exhausts charged time is recorded
+The complete HTTP request has its own deadline, even when less charged task time
+remains. Streaming Chat Completions renew this deadline on generation deltas,
+including reasoning; heartbeats do not renew it. A successful response that exhausts charged time is recorded
 but not delivered. A timed-out attempt retains unknown usage and its reserved
 allowance; excluding its wait does not refund calls or tokens.
+
+Online Judge provider input-size rejection raises a catchable `RuntimeError`
+prefixed `judge_input_limit`. It creates no judgment and does not cancel dispatch.
+The Loop may select smaller evidence or questions; an uncaught error produces a
+candidate error for official scoring and researcher feedback.
 
 ## Environment and traces
 

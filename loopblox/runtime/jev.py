@@ -78,11 +78,13 @@ def main():
             with TypeSafeClient(model=body["model"], timeout=REQUEST_SECONDS, retry=RetryPolicy(max_retries=0)) as client:
                 result = client.system_one(state=body["state"], questions=body["questions"]).model_dump(mode="json")
         except Exception as error:
-            code = ("model_timeout" if isinstance(error, TypeSafeAPITimeoutError) else
+            detail = error.body.get("detail", {}) if isinstance(error, TypeSafeAPIError) and isinstance(error.body, dict) else {}
+            code = ("jev_input_limit" if isinstance(detail, dict) and detail.get("error_type") == "max_tokens_exceeded" else
+                    "model_timeout" if isinstance(error, TypeSafeAPITimeoutError) else
                     "model_transport_failure" if isinstance(error, TypeSafeAPIConnectionError) else
                     "rate_limit" if isinstance(error, TypeSafeRateLimitError) else
                     "service_unavailable" if isinstance(error, TypeSafeAPIError)
-                    and error.status in {408, 500, 502, 503, 504} else "jev_request_failed")
+                    and error.status in {408, 500, 502, 503, 504, 529} else "jev_request_failed")
             result = dict(error=type(error).__name__ + ": " + str(error), code=code)
             if isinstance(error, TypeSafeAPIError):
                 result["response"] = dict(status=error.status, body=error.body)

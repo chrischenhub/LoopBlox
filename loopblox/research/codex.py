@@ -17,6 +17,7 @@ from dataclasses import dataclass, replace
 from loopblox.runtime.components import validate
 from loopblox.runtime.io import atomic_json, image_id, run_process
 from loopblox.runtime.model import BudgetExhausted, HostFault, OperationalProblem, ToolResult, _PROVIDER_STOP_CODES, load_env
+from loopblox.research.failures import incident
 
 NATIVE_VERSION = "0.155.0"
 NATIVE_SOURCE = "f0a1b8f0849d90960bc406b848f32e5a129b0457"
@@ -211,13 +212,15 @@ class CodexResearcher:
         lines.extend(['[skills]', 'include_instructions = false', '[skills.bundled]', 'enabled = false'])
         return "\n".join(lines) + "\n"
 
-    def _invoke(self, materials, directory, seconds, image, home, *, session_id=None):
+    def _invoke(self, materials, directory, seconds, image, home, *, session_id=None, instructions=None):
         """Return only after natural CLI exit and removal of its entire container."""
         prompt = ("Continue the current research iteration using the host result below. "
                   "The previous CLI and its container closed before the host executed that request. "
                   "Conversation history is preserved; tool processes and in-memory variables are not. "
                   "Read updated public evidence as needed. Return exactly one JSON object with tool and arguments."
                   if session_id else FILE_INSTRUCTIONS)
+        if instructions is not None:
+            prompt = instructions
         receipts = sorted((materials / "receipts").glob("call-*.json"))
         if receipts:
             latest = receipts[-1]
@@ -331,7 +334,7 @@ class CodexResearcher:
                 atomic_json(trace_path, result)
                 check_stop()
                 if call["exit_code"] or call["failure"]:
-                    raise HostFault("Native CLI failed; inspect " + str(directory / "stderr.txt"))
+                    raise HostFault("Native CLI failed; inspect " + str(directory / "stderr.txt"), response=call["failure"])
                 if not call["session_id"] or (session_id and call["session_id"] != session_id):
                     raise HostFault("Native CLI did not return the expected research session")
                 session_id = call["session_id"]
@@ -370,7 +373,7 @@ class CodexResearcher:
         except BudgetExhausted as error:
             result.update(status="budget_exhausted", error=str(error))
         except Exception as error:
-            result.update(status="failed", error=str(error))
+            result.update(status="failed", error=str(error), incident=incident(error, stage="researcher"))
         finally:
             native_home.cleanup()
             result["native_usage"] = native_usage(result["calls"])

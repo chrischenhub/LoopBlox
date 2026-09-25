@@ -6,7 +6,7 @@ from html import escape
 import json
 from pathlib import Path
 
-from loopblox.runtime.model import usage_tokens
+from loopblox.runtime.model import usage_tokens, charged_output_tokens
 from loopblox.runtime.io import atomic_text
 
 
@@ -28,7 +28,9 @@ def summarize_trace(record):
     for call in record["model_calls"]:
         item = components[owners[call["request"]["component_id"]]]
         item["model_attempts"] += 1
-        item["charged_output_tokens"] += call["charged_output_tokens"]
+        charge = call["charged_output_tokens"]
+        item["charged_output_tokens"] = (None if charge is None or item["charged_output_tokens"] is None
+                                         else item["charged_output_tokens"] + charge)
         item["unknown_output_attempts"] += usage_tokens(call["usage"], "completion_tokens") is None
 
     requests = [event for event in record["history"] if event["type"] == "tool_call"]
@@ -147,7 +149,8 @@ def write_trace_report(record, path):
 
     calls = record["model_calls"]
     unknown = sum(usage_tokens(call["usage"], "completion_tokens") is None for call in calls)
-    charged = sum(call["charged_output_tokens"] for call in calls)
+    charged = charged_output_tokens(calls)
+    charged = "unknown" if charged is None else charged
     tree = ''.join(render(block)[0] for block in children[None])
     scope = escape(record["scope"])
     page = f'''<!doctype html>

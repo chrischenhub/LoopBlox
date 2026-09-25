@@ -1,7 +1,11 @@
 ![LoopBlox](docs/assets/loopblox-banner.png)
 [Quick start](#quick-start) · [Visualize research](#visualize-your-experiment) · [Write a Loop](CONTROLLER.md) · [Components](COMPONENTS.md) · [Research protocol](experiment.md)
 
-LoopBlox lets a Codex researcher edit an agent's Python loop and test each version on the same benchmark. It saves the source code, task traces, scores, and research notes from each iteration. The current prototype uses ten official **τ²-bench telecom** training tasks.
+LoopBlox lets a Codex researcher edit an agent's Python loop and test each version on the same benchmark. It saves source code, task traces, scores and research notes from every iteration. The current experiment uses five official **AppWorld** training tasks, an isolated native code shell and the original evaluator. Research continues until you stop it.
+
+The earlier telecom campaign and AppWorld pilot runs remain stopped and archived.
+[AppWorld setup](docs/appworld.md) describes the current execution environment;
+[experiment.md](experiment.md) owns the continuous research protocol.
 
 ## A Loop is Python
 
@@ -22,9 +26,9 @@ The researcher can change component order, add branches, and repeat calls using 
 
 ## How research works
 
-![Research cycle: review results, edit the task Loop, evaluate it, and save findings for the next iteration.](docs/assets/research-process.png)
+![Research and Harness Loops: review results, edit and evaluate the Loop, save findings, and route errors to research feedback, infrastructure repair, or human input.](docs/assets/research-process.png)
 
-LoopBlox first runs the baseline on ten telecom tasks. Codex reviews the scores and traces, edits the Loop, and requests an evaluation on the same tasks.
+LoopBlox first runs the baseline on five AppWorld tasks. Codex reviews the scores and traces, edits the Loop, and requests an evaluation on the same tasks.
 
 LoopBlox keeps the best Loop by success rate, then cost. Codex saves its findings and tries the next change. This continues until you stop it. The [research protocol](experiment.md) defines evaluation and recovery rules.
 
@@ -40,7 +44,7 @@ cp .env.example .env
 
 ### 1. Set up the services
 
-Research uses three services. Codex edits Loops through your ChatGPT subscription. FreeInference or OpenCode Go runs the task agent and simulated user. Jev analyzes their task traces.
+Research uses three services. Codex edits Loops through your ChatGPT subscription. FreeInference or OpenCode Go runs the task agent (and the simulated user in interactive mode). Jev analyzes task traces.
 
 Follow the [installation guide](docs/running.md#install-the-host-dependencies) to install the benchmark environment, Jev SDK, and pinned Linux Codex distribution, then sign in to ChatGPT. Copy the two path assignments printed by setup into `.env` and set `FREEINFERENCE_API_KEY` and `TYPESAFE_API_KEY`. Paths must be absolute; `.env` does not expand `$HOME` or `$PWD`.
 
@@ -52,32 +56,23 @@ The guide also covers [other model providers](docs/running.md#host-configuration
 # Use the benchmark's Python environment
 source .artifacts/upstream/tau2-bench/.venv/bin/activate
 
-# Prepare ten training tasks; this does not call models
-python -B -m loopblox.benchmarks.run_tau2 \
-  prepare --output .artifacts/tau2/telecom-suite-NEW --seed 20260921
-
-# Evaluate the baseline, then start the researcher
-python -B -m loopblox.benchmarks.run_tau2 \
-  run --suite .artifacts/tau2/telecom-suite-NEW --output .artifacts/tau2/research-NEW
+# Run a fresh baseline, then continuously research on five training tasks
+python -B -m loopblox.benchmarks.run_appworld \
+  --output .artifacts/appworld/research-NEW \
+  --continuous --task-count 5 --seed 20260922 \
+  --provider freeinference --request-timeout 60 \
+  --code-image loopblox-appworld-code:0.1.3-post1
 ```
 
-Choose unused output directory names and a seed for your run. `run` stays in the foreground; leave that terminal open while research is running.
+Prepare AppWorld and its code image using [the setup guide](docs/appworld.md). Choose an unused output directory name. The runner stays in the foreground; leave that terminal open while research is running.
 
 ### 3. Check progress and stop
 
-In a second terminal, from the same repository root:
-
-```sh
-python3 -B -m loopblox.benchmarks.run_tau2 status --output .artifacts/tau2/research-NEW
-```
-
-To stop research, press Ctrl-C in the running terminal or use:
-
-```sh
-python3 -B -m loopblox.benchmarks.run_tau2 stop --output .artifacts/tau2/research-NEW
-```
-
-Wait for worker cleanup to finish. Completed results and usage remain on disk. After an infrastructure failure, follow the [recovery instructions](docs/running.md#run-stop-and-recover) to start a new attempt with the completed evidence and prior spend preserved.
+Read `<output>/evaluation/public/progress.json` for the incumbent and iteration count,
+and `<output>/result.json` for run status. To stop, press Ctrl-C in the running
+terminal or send SIGTERM to the PID recorded in `<output>/started.json`. Wait for
+worker cleanup; completed results and usage remain on disk. Infrastructure recovery
+uses a fresh directory and preserves completed evidence and all prior spend.
 
 ## Inspect a run
 
@@ -85,36 +80,42 @@ The campaign saves its files under the directory you passed to `--output`:
 
 ```text
 research-NEW/
-├── report.md                   # Scores and usage, refreshed by status
-├── status.json                 # Current state in JSON
-└── research/
-    ├── selected-controller.py  # Best fully evaluated Loop
+├── protocol.json               # Frozen task set, models and limits
+├── result.json                 # Run status
+└── evaluation/
+    ├── private/                # Native researcher and gateway ledgers
     └── public/
+        ├── progress.json       # Current incumbent and iteration count
         ├── notes.md            # Researcher's notebook
         ├── checkpoints/        # Saved iterations
-        └── evaluations/        # Task traces, scores, and Jev analysis
+        ├── candidates/         # Immutable Loop sources
+        └── evaluations/        # Task traces, official scores and Jev analysis
 ```
 
 `selected-controller.py` appears once a Loop has been fully evaluated. The researcher writes its notebook as it works. The example paths keep these records in Git-ignored `.artifacts/`; keep the campaign directory to retain them.
 
 ## Visualize your experiment
 
-Start the live dashboard from the repository root:
+The live dashboard discovers AppWorld and historical telecom campaigns. Start it from
+the repository root:
 
 ```sh
 python3 -B -m loopblox.research.dashboard
 ```
 
-Open [http://127.0.0.1:8767/](http://127.0.0.1:8767/). It refreshes every three seconds, detects live campaigns under `.artifacts/tau2/`, and follows the newest confirmed live experiment. When none is detected, it says so and shows the latest recorded campaign. The page combines live task progress, official scores, Jev analysis and usage with the generic Loop visualizer: candidate comparisons, Python source and differences, and actual execution paths. Select one task to compare across all Loops, or select a campaign to keep watching that attempt. The dashboard reads existing records without making model calls or changing the experiment. See the [live dashboard guide](docs/running.md#live-research-dashboard) for options and accounting.
+Open [http://127.0.0.1:8767/](http://127.0.0.1:8767/). It refreshes every three seconds, discovers campaigns in `.artifacts/appworld/` and `.artifacts/tau2/`, and follows the newest confirmed live experiment. When none is detected, it says so and shows the latest recorded campaign. All tabs identify the selected benchmark, frozen task count and task interface. The page combines live task progress, official scores, Jev analysis and usage with the generic Loop visualizer: candidate comparisons, Python source and differences, and actual execution paths. Select one task to compare across all Loops, or select a campaign to keep watching that attempt. The dashboard reads existing records without making model calls or changing the experiment. See the [live dashboard guide](docs/running.md#live-research-dashboard) for options and accounting.
 
 The **Research** tab summarizes the selected campaign's candidate evolution,
 recorded findings and research notes, including post-run Jev coverage and optional
 online Judge use. The main **Dashboard** tab keeps live progress and Loop exploration.
+The **Trace** tab plots Jev's recorded segment judgments for a selected Loop and task.
+Select a segment to inspect its original judgment, confidence and public execution
+evidence. Missing measurements remain gaps; Jev judgments are separate from official scores.
 
 For a standalone HTML report from a running or completed campaign:
 
 ```sh
-python3 -B -m loopblox.research.visualize .artifacts/tau2/research-NEW \
+python3 -B -m loopblox.research.visualize .artifacts/appworld/research-NEW/evaluation \
   --output .artifacts/visualizations/research-NEW.html
 ```
 
@@ -138,7 +139,9 @@ Open http://127.0.0.1:8766/ to chat and watch the baseline's component calls. Ea
 | [controllers/reactive.py](controllers/reactive.py) | The baseline task Loop. |
 | [runtime/components.py](loopblox/runtime/components.py) | Component behavior, parameters, and fixed prompts. |
 | [research/session.py](loopblox/research/session.py) | Candidate evaluations, selection, and iteration checkpoints. |
-| [research/campaign.py](loopblox/research/campaign.py) | Task limits, frozen run settings, stopping, and recovery. |
+| [benchmarks/run_appworld.py](loopblox/benchmarks/run_appworld.py) | Frozen AppWorld runs and continuous research dispatch. |
+| [benchmarks/appworld.py](loopblox/benchmarks/appworld.py) | Official AppWorld state, public API effects and private scoring. |
+| [research/campaign.py](loopblox/research/campaign.py) | Historical telecom campaign lifecycle and recovery. |
 | [benchmarks/tau2.py](loopblox/benchmarks/tau2.py) | Task preparation and integration with the official τ² environment and evaluator. |
 
 The [concept guide](loop.md) defines Loops and components. [Running research](docs/running.md) covers setup and operation; the [protocol](experiment.md) defines evaluation rules. Read [AGENTS.md](AGENTS.md) before changing the implementation.

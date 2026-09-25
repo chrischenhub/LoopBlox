@@ -13,11 +13,12 @@ from pathlib import Path
 from loopblox import ROOT, snapshot_implementation
 from loopblox.analysis import jev
 from loopblox.research.codex import default_researcher
+from loopblox.research.failures import incident
 from loopblox.research.workspace import ResearchWorkspace, configuration as workspace_configuration
 from loopblox.runtime.components import catalog, object_schema, render_contracts, validate
 from loopblox.runtime.controller import Limits, MAX_SOURCE_BYTES, ModelMeter
 from loopblox.runtime.model import BudgetExhausted, HostFault, OperationalProblem, Tool, ToolResult
-from loopblox.runtime.io import atomic_json, atomic_text, digest, cancellation_scope, check_cancelled
+from loopblox.runtime.io import atomic_json, atomic_text, digest, cancellation_scope, check_cancelled, EvaluationCancelled
 from loopblox.report import summarize_trace
 
 
@@ -362,11 +363,14 @@ class ResearchSession:
                     stopped.set()
                     saved = directory / row["directory"] / "result.json"
                     result = json.loads(saved.read_text()) if saved.is_file() else {}
-                    failure_status = "host_fault" if isinstance(caught, Exception) else None
+                    failure_status = "host_fault" if isinstance(caught, Exception) and not isinstance(caught, EvaluationCancelled) else None
                     result.update(status=failure_status or "interrupted", verification_verdict=None,
                                   stop_reason=str(caught))
                     error = HostFault(str(caught)) if failure_status else caught
                 row.update(result)
+                if result.get("incident", {}).get("route") in {"infra", "human"}:
+                    self.state["incident"] = result["incident"]
+                    atomic_json(self.private / "incident.json", result["incident"])
                 if failure_status:
                     self.state["research_status"] = failure_status
                 self.save()
@@ -401,7 +405,8 @@ class ResearchSession:
                             failures.append(error)
                 if failures:
                     # Drain all lanes so peer cancellation cannot hide the original fault.
-                    raise next((error for error in failures if isinstance(error, Exception)), failures[0])
+                    raise next((error for error in failures if isinstance(error, Exception)
+                                and not isinstance(error, EvaluationCancelled)), failures[0])
             finally:
                 stopped.set()
                 pool.shutdown(wait=True)
@@ -449,6 +454,8 @@ class ResearchSession:
                 if row["status"] in {"host_fault", "operational_failure", "verifier_failure"}:
                     failure_status = row["status"]
                     raise HostFault(f"Development evaluation {scope} failed: {row['status']}")
+                if row["status"] in {"budget_exhausted", "candidate_error"} or row.get("verification_verdict") == "fail":
+                    row["incident"] = incident(stage="task", status=row["status"], code=row.get("code"))
                 row["elapsed_seconds"] = time.monotonic() - started
                 stage = "analysis"
                 check_cancelled()
@@ -460,13 +467,22 @@ class ResearchSession:
                     saved = directory / "result.json"
                     if saved.is_file():
                         row.update(json.loads(saved.read_text()))
-                    row.update(status="host_fault" if isinstance(caught, Exception) else "interrupted",
+                    row.update(status="host_fault" if isinstance(caught, Exception) and not isinstance(caught, EvaluationCancelled) else "interrupted",
                                stop_reason=str(caught), verification_verdict=None)
                 if isinstance(caught, BudgetExhausted):
                     failure_status = "budget_exhausted"
-                elif isinstance(caught, Exception):
+                elif isinstance(caught, Exception) and not isinstance(caught, EvaluationCancelled):
                     failure_status = failure_status or ("operational_failure" if stage == "analysis" else "host_fault")
                     error = HostFault(f"{stage.capitalize()} failed for {scope}: {caught}")
+                if isinstance(caught, Exception) and not isinstance(caught, EvaluationCancelled):
+                    latest = next((call for call in reversed(self.meter.calls)
+                        if (call["scope"] == scope or call["scope"].startswith(scope + ":"))
+                        and (stage != "analysis" or call["scope"].startswith(scope + ":jev:"))), {})
+                    attempt = latest if latest.get("status") == "failed" and failure_status != "verifier_failure" else {}
+                    row["incident"] = dict(incident(caught, stage=stage, status=row.get("status"),
+                        code=attempt.get("failure_code") or (row.get("code") if stage == "task" else None),
+                        response=attempt.get("response")),
+                        scope=scope, trace=str(trace.relative_to(self.public)))
             finally:
                 if stage == "task":
                     row["elapsed_seconds"] = time.monotonic() - started
@@ -523,8 +539,9 @@ class ResearchSession:
                       ranking=self.ranking(), notes=notes, task_runs_used=self.state["task_runs_used"],
                       research_usage=current_usage, cumulative_usage=cumulative_usage,
                       cumulative_task_runs=self.prior_accounting.get("task_runs", 0) + self.state["task_runs_used"],
-                      cumulative_charged_seconds=self.prior_accounting.get("charged_seconds", 0) + max(0,
-                          time.monotonic() - self.meter.started - self.meter.timeout_wait_seconds))
+                      cumulative_charged_seconds=(None if self.prior_accounting.get("charged_seconds", 0) is None else
+                          self.prior_accounting.get("charged_seconds", 0) + max(0,
+                          time.monotonic() - self.meter.started - self.meter.timeout_wait_seconds)))
         atomic_json(self.public / "checkpoints" / f"iteration-{index:04d}.json", record)
         atomic_text(self.public / "notes.md", notes)
         self.state["iterations"].append(record)
@@ -579,7 +596,7 @@ class ResearchSession:
                  "Reuse its recorded evidence; evaluation requests must follow the frozen campaign policy.",
                  CANDIDATE_SCHEMA, "mutate", self.save_candidate),
             Tool("evaluate", self.task_selection + " Evaluate one or both saved candidates. "
-                 "All ten results and mandatory Jev analysis must finish before feedback. "
+                 "All task results and mandatory Jev analysis must finish before feedback. "
                  "The host ranks success first, then agent input tokens, then agent model calls; ties retain the incumbent. "
                  "Infrastructure faults stop this attempt; ordinary task failures remain valid results.",
                  object_schema({"candidate_ids": {"type": "array", "items": {"type": "string"},
@@ -737,12 +754,16 @@ class ResearchSession:
             if research["status"] == "budget_exhausted":
                 self.state.update(status="budget_exhausted", stop_reason=research.get("error"))
             else:
+                self.state.setdefault("incident", research.get("incident") or incident(
+                    HostFault(research.get("error") or "Native researcher ended unexpectedly"), stage="researcher"))
                 raise HostFault("Continuous researcher ended unexpectedly: " + research["status"])
         except KeyboardInterrupt:
             self.state.update(status="stopped", research_status="user_stopped", stop_reason="user_stop")
         except BaseException as error:
             self.state.update(status="interrupted", error=str(error), error_type=type(error).__name__)
             self.state.setdefault("research_status", "host_fault")
+            self.state.setdefault("incident", incident(error, stage="researcher"))
+            atomic_json(self.private / "incident.json", self.state["incident"])
             raise
         finally:
             self.state["frozen_candidate"] = self.state["selected"]

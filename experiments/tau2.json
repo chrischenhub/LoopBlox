@@ -1,5 +1,5 @@
 {
-  "question": "Improve reusable Python Loops on the same frozen telecom development tasks. Keep the approved components, model, tools and per-task limits fixed, including simulated-user model calls. Use official outcomes, public traces, Jev measurements and recorded cost to investigate candidate behavior. Follow the frozen campaign's iteration and stopping policy. Reused development results do not establish generalization or a causal gain. Do not encode task IDs, customers, diagnoses, answers or research history in candidate source. The environment supplies the policy, tools and customer messages at runtime.",
+  "question": "Improve reusable Python Loops on the same frozen telecom development tasks. Keep the approved components, model, interaction mode, tools and per-task limits fixed. Use official outcomes, public traces, Jev measurements and recorded cost to investigate candidate behavior. Follow the frozen campaign's iteration and stopping policy. Reused development results do not establish generalization or a causal gain. Do not encode task IDs, customers, diagnoses, answers or research history in candidate source. The environment supplies the policy, tools and task information at runtime.",
   "exposed": {
     "context_full": {},
     "context_recent": {},

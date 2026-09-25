@@ -36,10 +36,14 @@ def research_summary(public, loops):
     public = Path(public).resolve()
     sources, warnings = set(), []
 
-    def read(relative, *, text=False):
+    def record_path(relative):
         path = (public / relative).resolve()
         if not path.is_relative_to(public) or "private" in path.relative_to(public).parts:
             raise ValueError(f"Record points outside public evidence: {relative}")
+        return path
+
+    def read(relative, *, text=False):
+        path = record_path(relative)
         if not path.is_file():
             return None
         try:
@@ -91,7 +95,7 @@ def research_summary(public, loops):
                 analyses.append(analysis)
                 usages.append(analysis.get("usage", {}))
                 by_candidate.setdefault(row["candidate_id"], []).append(analysis)
-                sources.add(analysis["artifact"])
+                sources.add(str(record_path(analysis["artifact"]).relative_to(public)))
                 # Segmentation owns every invocation once, including failed tails.
                 judge = [segment["execution"]["components"].get("judge", {})
                          for segment in analysis["segments"]]
@@ -189,8 +193,11 @@ def research_summary(public, loops):
             output_tokens=_total(usages, "model_output_tokens"),
             incomplete_usage_calls=_total(usages, "incomplete_usage_calls"), schemas=schemas, online_judge=online,
             evidence_use=dict(status="researcher_account" if excerpts else "not_recorded", excerpts=excerpts,
-                              explanation="These are verbatim Jev-related passages from the public research notebook. "
+                              explanation=("These are verbatim Jev-related passages from the public research notebook. "
                               "They show the researcher's stated interpretation, not an independently recorded log of "
-                              "which artifacts were read. Available Jev evidence alone does not establish its use or a causal gain."),
+                              "which artifacts were read. " if excerpts else
+                              "No Jev interpretation excerpt was found in the public research notebook. "
+                              "This page has no independently recorded public log of which artifacts were read. ")
+                              + "Available Jev evidence alone does not establish its use or a causal gain."),
             sources=sorted({"jev-config.json", "jev-guide.md"} & sources
                            | {item["artifact"] for item in analyses})))

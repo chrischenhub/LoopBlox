@@ -224,7 +224,8 @@ _task_completion = ContextVar("tau2_task_completion")
 class Tau2Runner:
     """Fresh official environment/user per task; all candidate code stays in the isolated worker."""
 
-    def __init__(self, suite, manifest, client, user_client, worker_image, limits, private, *, recovery_tasks=None):
+    def __init__(self, suite, manifest, client, user_client, worker_image, limits, private, *, recovery_tasks=None,
+                 solo_mode=False):
         self.suite, self.manifest = Path(suite).resolve(), manifest
         versions = json.loads((self.suite / "versions.json").read_text())
         installed = {d.metadata["Name"]: d.version for d in importlib.metadata.distributions()}
@@ -234,6 +235,7 @@ class Tau2Runner:
         self.client, self.user_client, self.worker_image, self.limits = client, user_client, worker_image, limits
         self.private = Path(private)
         self.recovery_tasks = recovery_tasks or {}
+        self.solo_mode = solo_mode
         configure(self.suite / "upstream", self.suite / "upstream/data")
         from tau2.utils import llm_utils
         # Install once, before dispatch. Each thread resolves its own environment's
@@ -250,13 +252,14 @@ class Tau2Runner:
             limits = Limits(**prior["limits"])
         from litellm import ModelResponse
         from tau2.agent.base_agent import HalfDuplexAgent
+        from tau2.agent.llm_agent import LLMSoloAgent, AGENT_SOLO_INSTRUCTION
         from tau2.data_model.message import AssistantMessage, ToolCall, ToolMessage, UserMessage
         from tau2.data_model.simulation import TerminationReason
         from tau2.data_model.tasks import Task
         from tau2.evaluator.evaluator import EvaluationType, evaluate_simulation
         from tau2.orchestrator.orchestrator import Orchestrator, Role
         from tau2.registry import registry
-        from tau2.user.user_simulator import UserSimulator
+        from tau2.user.user_simulator import DummyUser, UserSimulator
         from tau2.utils.utils import get_now
 
         class ExternalAgent(HalfDuplexAgent):
@@ -278,16 +281,27 @@ class Tau2Runner:
             def is_stop(cls, message):
                 return message.content is not None and "###STOP###" in message.content
 
+        class ExternalSoloAgent(ExternalAgent, LLMSoloAgent):
+            def generate_next_message(self, message, state):
+                result, state = super().generate_next_message(message, state)
+                if result.is_tool_call():
+                    result = self._check_if_stop_toolcall(result)
+                return result, state
+
         selected = self.tasks[task_id]
         task = Task.model_validate(selected["task"])
+        if self.solo_mode and (not task.ticket or (task.initial_state and task.initial_state.message_history)):
+            raise HostFault("Solo task runs require an official ticket and no initial message history")
         directory.mkdir(parents=True, exist_ok=False)
         atomic_text(directory / "controller.py", source)
         private = self.private / uuid.uuid4().hex
         task_meter = ModelMeter(private / "usage.json", parent=meter, seconds=limits.seconds,
                                 model_calls=limits.model_calls, output_tokens=limits.output_tokens)
         started, runtime, orchestrator = time.monotonic(), None, None
+        initialized = False
         environment_error, grading = None, False
-        row = dict(task_id=task_id, family=selected["family"], status="running", verification_verdict=None)
+        row = dict(task_id=task_id, family=selected["family"], solo_mode=self.solo_mode,
+                   status="running", verification_verdict=None)
 
         def completion(**kwargs):
             owner = runtime.active_component_id if runtime and not grading else None
@@ -317,6 +331,8 @@ class Tau2Runner:
                 orchestrator._check_termination()
 
         def observation():
+            if not initialized:
+                return dict(messages=[], conversation_done=False)
             message = orchestrator.message
             visible = []
             if isinstance(message, UserMessage) and not message.is_tool_call():
@@ -326,18 +342,25 @@ class Tau2Runner:
             return dict(messages=visible, conversation_done=orchestrator.done)
 
         def act(name, arguments, timeout):
-            nonlocal environment_error
+            nonlocal environment_error, initialized
             if orchestrator.done:
                 return ToolResult("failed", dict(error="Conversation has ended. Return from the controller.",
                                                  conversation_done=True), "none")
-            before = (environment.get_db_hash(), environment.get_user_db_hash())
             if name == "respond_to_user":
                 agent.pending = AssistantMessage(role="assistant", content=arguments["message"])
             else:
                 agent.pending = AssistantMessage(role="assistant", tool_calls=[ToolCall(
                     id=uuid.uuid4().hex, name=name, arguments=arguments)])
             try:
-                orchestrator.step()
+                if not initialized:
+                    # Official solo initialization consumes the first agent action.
+                    # Defer it until the isolated controller supplies that action.
+                    orchestrator.initialize()
+                    initialized = True
+                    before = (environment.get_db_hash(), environment.get_user_db_hash())
+                else:
+                    before = (environment.get_db_hash(), environment.get_user_db_hash())
+                    orchestrator.step()
                 orchestrator._check_termination()
                 advance()
             except BudgetExhausted:
@@ -352,19 +375,24 @@ class Tau2Runner:
             value = observation()
             failed = any(item.get("error") for item in value["messages"])
             return ToolResult("failed" if failed else "ok", value,
-                              "applied" if before != after or name == "respond_to_user" else "none")
+                              "applied" if before != after or name in {"respond_to_user", "done"} else "none")
 
         completion_token = _task_completion.set(completion)
         try:
             # Retain the official prompts, message conversion and user-tool behavior.
             # Only provider transport is replaced; the host owns retries and every charge.
-            environment = registry.get_env_constructor(selected["family"])()
-            agent = ExternalAgent(environment.get_tools(), environment.get_policy())
-            user = UserSimulator(tools=environment.get_user_tools(include=task.user_tools) if environment.user_tools else None,
-                                 instructions=task.user_scenario, llm=self.user_client.model,
-                                 llm_args={"temperature": self.user_client.temperature, "num_retries": 0})
+            environment = registry.get_env_constructor(selected["family"])(solo_mode=self.solo_mode)
+            if self.solo_mode:
+                agent = ExternalSoloAgent(tools=environment.get_tools() + environment.get_user_tools(),
+                                          domain_policy=environment.get_policy(), task=task, llm=self.client.model)
+                user = DummyUser()
+            else:
+                agent = ExternalAgent(environment.get_tools(), environment.get_policy())
+                user = UserSimulator(tools=environment.get_user_tools(include=task.user_tools) if environment.user_tools else None,
+                                     instructions=task.user_scenario, llm=self.user_client.model,
+                                     llm_args={"temperature": self.user_client.temperature, "num_retries": 0})
             orchestrator = Orchestrator(domain=selected["family"], agent=agent, user=user, environment=environment,
-                                        task=task, seed=selected["seed"],
+                                        task=task, seed=selected["seed"], solo_mode=self.solo_mode,
                                         # The pinned upstream only compares this internal value;
                                         # persisted limits retain None rather than JSON Infinity.
                                         max_steps=math.inf if limits.actions is None else limits.actions * 8,
@@ -372,10 +400,12 @@ class Tau2Runner:
                                         # no-effect model timeout waits. Upstream uses wall time.
                                         timeout=None)
             orchestrator._run_start_time, orchestrator._run_start_perf = get_now(), time.perf_counter()
-            orchestrator.initialize()
             initialization_exhaustion = None
             try:
-                advance()
+                if not self.solo_mode:
+                    orchestrator.initialize()
+                    initialized = True
+                    advance()
             except BudgetExhausted as error:
                 # A user turn can exhaust the shared meter before an agent worker
                 # starts. Close and score that actual trajectory below, too.
@@ -385,20 +415,28 @@ class Tau2Runner:
                              "environment. When conversation_done is true, or your work is complete, return a final "
                              "controller response. A final return is not delivered to the customer and does not verify success.",
                              policy=environment.get_policy(), initial_observation=observation())
+            if self.solo_mode:
+                disclosed = dict(problem=AGENT_SOLO_INSTRUCTION.format(stop_function_name="done"),
+                                 policy=environment.get_policy(), ticket=task.ticket,
+                                 controller_contract="When conversation_done is true, propose completion so the outer "
+                                 "run(env) can return. This controller response is not a message to the customer "
+                                 "and does not verify task success.",
+                                 initial_observation=observation())
             atomic_json(directory / "task.json", disclosed)
             tools = []
-            for item in environment.get_tools():
+            for item in agent.tools if self.solo_mode else environment.get_tools():
                 function = item.openai_schema["function"]
                 name = function["name"]
                 tools.append(Tool(name, function["description"], function["parameters"],
-                                  "mutate" if environment.tools.tool_mutates_state(name) else "inspect",
+                                  "mutate" if environment._is_mutating_tool(name) else "inspect",
                                   lambda arguments, timeout, name=name: act(name, arguments, timeout),
                                   preserve_observation_fields=("conversation_done",)))
-            tools.append(Tool("respond_to_user", "Send a message to the simulated customer and receive their response. "
-                              "The customer may use their own device tools. Each user-model attempt consumes task budget.",
-                              object_schema({"message": {"type": "string"}}), "mutate",
-                              lambda arguments, timeout: act("respond_to_user", arguments, timeout),
-                              preserve_observation_fields=("conversation_done",)))
+            if not self.solo_mode:
+                tools.append(Tool("respond_to_user", "Send a message to the simulated customer and receive their response. "
+                                  "The customer may use their own device tools. Each user-model attempt consumes task budget.",
+                                  object_schema({"message": {"type": "string"}}), "mutate",
+                                  lambda arguments, timeout: act("respond_to_user", arguments, timeout),
+                                  preserve_observation_fields=("conversation_done",)))
             runtime = ControllerRuntime(task=disclosed, tools=tuple(tools), client=self.client, meter=task_meter,
                                         limits=limits, trace_path=directory / "trace.json", scope=scope,
                                         image=self.worker_image, exposed=exposed)
@@ -418,6 +456,10 @@ class Tau2Runner:
             if initialization_exhaustion is not None:
                 row["stop_phase"] = "initialization"
             # No task worker is alive here. Close the official simulation, then score.
+            if not initialized:
+                agent.pending = AssistantMessage(role="assistant", content="###STOP###")
+                orchestrator.initialize()
+                initialized = True
             if not orchestrator.done:
                 orchestrator.done = True
                 orchestrator.termination_reason = (
@@ -427,7 +469,7 @@ class Tau2Runner:
             atomic_json(private / "simulation.json", simulation.model_dump(mode="json"))
             try:
                 grading = True
-                verification = evaluate_simulation(simulation, task, EvaluationType.ALL, False, selected["family"])
+                verification = evaluate_simulation(simulation, task, EvaluationType.ALL, self.solo_mode, selected["family"])
                 expected = task.evaluation_criteria.nl_assertions if task.evaluation_criteria else None
                 if (expected and "NL_ASSERTION" in (verification.reward_basis or [])
                         and Counter(check.nl_assertion for check in verification.nl_assertions or []) != Counter(expected)):

@@ -52,6 +52,7 @@
       --serif: "Source Serif 4", "Iowan Old Style", Georgia, serif;
       --mono: "JetBrains Mono", "SFMono-Regular", ui-monospace, Menlo, Consolas, monospace;
       --pixel: "Departure Mono", "JetBrains Mono", ui-monospace, monospace;
+      --topbar: 80px;
       color: var(--text);
       background: var(--bg);
       font: 400 16px/1.55 var(--serif);
@@ -93,6 +94,10 @@
     }
 
     .topbar {
+      position: sticky;
+      top: 0;
+      z-index: 20;
+      backdrop-filter: blur(7px);
       display: flex;
       align-items: center;
       gap: 28px;
@@ -184,6 +189,12 @@
     }
     .banner strong { font-weight: 400; }
     .banner.error { border-color: #714e42; border-left-color: var(--red); background: #2b211d; color: var(--red); }
+    .supervision { margin-bottom:20px; padding:15px 17px; border:1px solid var(--line-strong); border-left:3px solid var(--green); background:var(--surface); }
+    .supervision-head { display:flex; align-items:center; flex-wrap:wrap; gap:9px 16px; margin-bottom:8px; }
+    .supervision-head h2 { margin:0; font:14px/1.6 var(--pixel); }
+    .supervision-meta { display:flex; flex-wrap:wrap; gap:5px 18px; color:var(--muted); font:11px/1.7 var(--mono); }
+    .supervision-note { margin-top:8px; color:var(--copy); font:12px/1.7 var(--mono); overflow-wrap:anywhere; }
+    .supervision-action { color:var(--amber); white-space:pre-wrap; }
 
     .hero {
       overflow: hidden;
@@ -204,6 +215,8 @@
     .hero-heading { display: flex; align-items: center; flex-wrap: wrap; gap: 13px; margin: 8px 0; }
     .hero-heading h2 { font-size: 31px; }
     .campaign-name { color: var(--copy); font-size: 12px; overflow-wrap: anywhere; }
+    .campaign-identity { display:flex; flex-wrap:wrap; gap:7px 16px; margin-top:11px; color:var(--muted); font:11px/1.65 var(--pixel); }
+    .campaign-identity span:first-child { color:var(--green); }
     .campaign-metadata { display: flex; gap: 8px 18px; flex-wrap: wrap; margin-top: 10px; color: var(--dim); font: 11px/1.65 var(--mono); }
     .hero-time { text-align: right; flex-shrink: 0; }
     .hero-time .eyebrow { color: var(--muted); }
@@ -235,6 +248,8 @@
       white-space: nowrap;
       vertical-align: middle;
     }
+    .pill.quiet { color: var(--muted); background: #1b2822; border-color: var(--line); }
+    .pill.strong { padding: 5px 9px; font-size: 12px; }
     .pill.green { color: var(--green); background: var(--green-bg); border-color: #3d6657; }
     .pill.blue { color: var(--blue); background: #1b282b; border-color: #405660; }
     .pill.amber { color: var(--amber); background: #2a271c; border-color: #64573c; }
@@ -250,9 +265,20 @@
     .batch-heading h3 { font-size: 13px; overflow-wrap: anywhere; }
     .batch-number { margin-top: 5px; color: var(--muted); font-size: 14px; }
     .batch-progress { padding: 0 22px 19px; }
-    .progress-track { display: flex; height: 6px; overflow: hidden; background: #2b3b33; }
-    .progress-fill { height: 100%; background: var(--green); transition: width .5s ease; }
-    .progress-labels { display: flex; justify-content: space-between; gap: 15px; margin-top: 10px; color: var(--muted); font: 11px/1.6 var(--mono); }
+    .progress-track { display: flex; height: 10px; overflow: hidden; background: #2b3b33; }
+    .progress-track .seg { height: 100%; transition: width .5s ease; }
+    .progress-track .seg.pass { background: var(--green); }
+    .progress-track .seg.fail { background: var(--red); }
+    .progress-track .seg.missing { background: var(--amber); }
+    .progress-track .seg.active { background: var(--blue); }
+    .progress-labels { display: flex; justify-content: space-between; flex-wrap: wrap; gap: 6px 15px; margin-top: 11px; color: var(--muted); font: 11px/1.6 var(--mono); }
+    .bar-key { display: flex; flex-wrap: wrap; align-items: center; gap: 5px 16px; }
+    .bar-key span { display: inline-flex; align-items: center; gap: 6px; }
+    .bar-key i { width: 9px; height: 9px; background: #2b3b33; }
+    .bar-key i.pass { background: var(--green); }
+    .bar-key i.fail { background: var(--red); }
+    .bar-key i.missing { background: var(--amber); }
+    .bar-key i.active { background: var(--blue); }
     .batch-counts { display: grid; grid-template-columns: repeat(4, 1fr); border-top: 1px solid var(--line); background: var(--canvas); }
     .batch-count { padding: 17px 22px; border-right: 1px solid var(--line); }
     .batch-count:last-child { border-right: 0; }
@@ -292,27 +318,27 @@
     .cell-sub { display: block; margin-top: 4px; color: var(--dim); font-size: 11px; }
     .cell-primary { font-size: 11px; }
     .task-table th:first-child, .task-table td:first-child { padding-left: 22px; }
-    .table-note { padding-top: 10px; color: var(--dim); font: 11px/1.7 var(--mono); }
+    .table-note { padding-top: 10px; color: var(--dim); font: 13px/1.7 var(--serif); }
     details summary { width: fit-content; color: var(--muted); font: 11px/1.6 var(--pixel); cursor: pointer; }
     details summary:hover, details[open] summary { color: var(--text); }
     .rationale { max-width: 490px; margin-top: 10px; color: var(--copy); font: 15px/1.65 var(--serif); white-space: pre-wrap; overflow-wrap: anywhere; }
 
     .page-nav { display:flex; flex-wrap:wrap; gap:10px 28px; margin:0 0 26px; padding:13px 0; border-block:1px solid var(--line); font:11px/1.6 var(--pixel); color:var(--muted); }
     .page-nav a:hover { color:var(--green); }
-    #live-monitoring, #loop-evolution, #research-notes { scroll-margin-top:24px; }
+    #live-monitoring, #loop-evolution, #research-notes, #research-overview, #candidate-history, #jev-evidence, #research-records, #trace-selection, #trace-signals, #trace-evidence-section { scroll-margin-top:calc(var(--topbar) + 18px); }
     .loop-heading { align-items:flex-start; }
     .loop-heading .section-meta { max-width:none; text-align:left; font:11px/1.6 var(--mono); }
     .loop-task-picker { width:340px; max-width:100%; flex-shrink:0; }
     .loop-task-picker label { display:block; margin-bottom:8px; color:var(--muted); font:11px/1.5 var(--pixel); }
     .loop-task-picker select:disabled { cursor:default; opacity:.65; }
-    .loop-task-picker small { display:block; margin-top:7px; color:var(--dim); font:11px/1.6 var(--mono); }
-    .loop-legend { margin:0 0 18px; color:var(--muted); font:11px/1.8 var(--mono); max-width:1060px; }
+    .loop-task-picker small { display:block; margin-top:7px; color:var(--dim); font:13px/1.6 var(--serif); }
+    .loop-legend { margin:0 0 18px; color:var(--copy); font:14px/1.65 var(--serif); max-width:1060px; }
     .loop-legend strong { color:var(--amber); font-weight:400; }
-    .loop-footnote { margin-top:17px; max-width:1120px; color:var(--dim); font:11px/1.8 var(--mono); }
+    .loop-footnote { margin-top:17px; max-width:1120px; color:var(--dim); font:13px/1.7 var(--serif); }
     .loop-visualization { display:grid; gap:22px; }
     .loop-visualization section { margin:0; }
     .loop-visualization p { color:var(--muted); }
-    .loop-visualization .candidate { min-width:0; background:var(--surface); border:1px solid var(--line); scroll-margin-top:24px; }
+    .loop-visualization .candidate { min-width:0; background:var(--surface); border:1px solid var(--line); scroll-margin-top:calc(var(--topbar) + 18px); }
     .loop-visualization .candidate.selected { border-color:var(--green); }
     .loop-visualization .candidate-head { display:grid; grid-template-columns:minmax(200px,1fr) minmax(450px,1fr); gap:24px; padding:22px 24px; border-bottom:1px solid var(--line); align-items:center; }
     .loop-visualization .candidate-head h2 { margin:8px 0; font:25px/1.3 var(--pixel); letter-spacing:-.5px; }
@@ -328,15 +354,40 @@
     .loop-visualization .cost div { display:flex; justify-content:space-between; gap:10px; }
     .loop-visualization .cost dt { color:var(--muted); }
     .loop-visualization .cost dd { margin:0; }
-    .loop-visualization .task-dots { display:flex; gap:5px; flex-wrap:wrap; grid-column:1; }
-    .loop-visualization .task-dot { display:flex; align-items:center; justify-content:center; width:14px; height:14px; border:1px solid #856a59; color:var(--red); font:11px var(--mono); }
-    .loop-visualization .task-dot.pass { border-color:#527e65; color:var(--green); font-size:7px; }
-    .loop-visualization .task-dot.pending { color:var(--muted); border-color:var(--line); }
+    .loop-visualization .task-dots { display:flex; gap:2px; flex-wrap:wrap; grid-column:1; }
+    .loop-visualization .task-dot { width:10px; height:18px; background:#2b3b33; }
+    .loop-visualization .task-dot.pass { background:var(--green); }
+    .loop-visualization .task-dot.fail { background:var(--red); }
+    .loop-visualization .empty-dots { color:var(--dim); font:11px var(--mono); }
+    .loop-summary { min-width:0; overflow-x:auto; border:1px solid var(--line); background:var(--surface); }
+    .loop-summary table { white-space:nowrap; }
+    .loop-summary th { padding:11px 16px; }
+    .loop-summary td { padding:12px 16px; vertical-align:middle; }
+    .loop-summary tbody tr:last-child td { border-bottom:0; }
+    .loop-summary tr.current td { background:var(--green-bg); }
+    .loop-summary a { display:inline-block; }
+    .loop-summary a:hover b, .loop-summary a:focus-visible b { color:var(--green); }
+    .loop-summary b { font:13px var(--mono); font-weight:400; }
+    .loop-summary .row-sub { display:block; margin-top:3px; color:var(--dim); font-size:10px; }
+    .loop-summary .num small { color:var(--dim); }
+    .loop-summary .delta.up { color:var(--green); }
+    .loop-summary .delta.down { color:var(--red); }
+    .loop-summary .delta.flat { color:var(--dim); }
+    .loop-summary .delta-sub { display:block; margin-top:3px; color:var(--dim); font-size:10px; }
+    .loop-summary .token-bar { display:block; height:3px; margin-top:6px; background:#2b3b33; }
+    .loop-summary .token-bar span { display:block; height:100%; background:#6b8f79; }
+    .loop-summary .row-status { color:var(--muted); }
+    .loop-summary tr.current .row-status { color:var(--green); }
+    .loop-visualization details.candidate-body { border-top:0; padding:0; }
+    .loop-visualization .candidate-body > summary { padding:11px 24px; border-bottom:1px solid var(--line); color:var(--muted); }
+    .loop-visualization .candidate-body[open] > summary { color:var(--text); }
     .loop-visualization .path-section { padding:16px 24px 8px; }
     .loop-visualization .graph-scroll { overflow-x:auto; padding:6px 0; }
     .loop-visualization .graph-scroll:focus-visible { outline:2px solid var(--green); outline-offset:3px; }
     .loop-visualization .execution-graph { display:block; width:100%; height:auto; margin:0; }
     .loop-visualization .graph-edge { fill:none; stroke:#6b8f79; stroke-width:1.1; }
+    .loop-visualization .graph-edge.new { stroke:var(--amber); }
+    .loop-visualization .edge-count.new { fill:var(--amber); }
     .loop-visualization .edge-count { font:10px var(--mono); text-anchor:middle; fill:var(--muted); paint-order:stroke; stroke:var(--surface); stroke-width:4px; }
     .loop-visualization .graph-node rect { fill:#203127; stroke:#4d6657; }
     .loop-visualization .graph-node text { font:11px var(--mono); fill:var(--text); text-anchor:middle; }
@@ -381,6 +432,7 @@
       .loop-visualization .evaluation { grid-template-columns:1fr; }
       .loop-visualization .cost { grid-row:auto; grid-column:1; margin-top:8px; }
       .loop-visualization .pattern { grid-template-columns:40px minmax(0,1fr); gap:8px; padding:10px; }
+      .loop-visualization .candidate-body > summary { padding:11px 16px; }
       .page-nav { gap:10px 18px; font-size:10px; }
     }
 
@@ -413,7 +465,7 @@
     .footer span:last-child { text-align: right; }
 
     .research-campaign { display:flex; align-items:center; flex-wrap:wrap; gap:12px 20px; padding:17px 20px; margin-bottom:25px; border:1px solid var(--line); background:var(--surface); }
-    .research-campaign .campaign-name { min-width:0; flex:1 1 320px; }
+    .research-campaign-info { min-width:0; flex:1 1 320px; }
     .research-lead { display:grid; grid-template-columns:minmax(0,1.3fr) minmax(0,1fr); gap:30px; padding:25px; border:1px solid var(--line-strong); border-top:2px solid #4d9682; background:var(--surface); }
     .research-lead h2 { margin:10px 0; font-size:30px; }
     .research-lead p { max-width:680px; color:var(--copy); font-size:16px; line-height:1.75; }
@@ -459,7 +511,64 @@
     .research-notebook { padding:19px 22px; border:1px solid var(--line); background:var(--surface); }
     .research-notebook > details { margin-top:17px; padding-top:16px; border-top:1px solid var(--line); }
     .research-notebook .rationale { max-width:none; }
-    #research-overview, #candidate-history, #jev-evidence, #research-records { scroll-margin-top:24px; }
+    .trace-selectors { display:grid; grid-template-columns:1fr 1.4fr 1.2fr; gap:16px; padding:20px; border:1px solid var(--line); background:var(--surface); }
+    .trace-picker { min-width:0; }
+    .trace-picker label { display:block; margin-bottom:8px; color:var(--muted); font:11px/1.6 var(--pixel); }
+    .trace-picker select { width:100%; }
+    .trace-picker select:disabled { opacity:.6; }
+    .trace-outcome { position:sticky; top:var(--topbar); z-index:15; display:flex; align-items:center; justify-content:space-between; gap:12px 24px; padding:16px 20px; border:1px solid var(--line-strong); background:var(--surface-2); box-shadow:0 8px 18px #0003; }
+    .trace-result-label { color:var(--muted); font:10px/1.5 var(--pixel); text-transform:uppercase; }
+    .trace-result-value { display:block; margin-top:3px; font:27px/1.2 var(--serif); }
+    .trace-result-value.green { color:var(--green); }
+    .trace-result-value.red { color:var(--red); }
+    .trace-result-value.amber { color:var(--amber); }
+    .trace-result-context { min-width:0; max-width:340px; color:var(--copy); font:11px/1.6 var(--mono); }
+    .trace-result-context p { margin-top:3px; color:var(--muted); font:12px/1.45 var(--serif); }
+    #trace-signals, #trace-evidence-section { scroll-margin-top:calc(var(--topbar) + 130px); }
+    .trace-run { margin-top:18px; padding:20px; border:1px solid var(--line); background:var(--surface); }
+    .trace-run-head { display:flex; align-items:center; flex-wrap:wrap; gap:12px 22px; }
+    .trace-run-head h2 { font-size:24px; }
+    .trace-run-meta { display:flex; flex-wrap:wrap; gap:7px 22px; margin-top:12px; color:var(--muted); font:11px/1.7 var(--mono); }
+    .trace-segment-controls { display:flex; align-items:flex-end; flex-wrap:wrap; gap:14px; margin:20px 0 15px; }
+    .trace-segment-controls .trace-picker { flex:1 1 260px; }
+    .trace-step { min-height:39px; padding:8px 12px; border:1px solid var(--line-strong); color:var(--green); background:var(--surface); font:11px/1.6 var(--pixel); cursor:pointer; }
+    .trace-step:hover { background:var(--green-bg); }
+    .trace-step:disabled { cursor:default; opacity:.35; }
+    .trace-step:focus-visible { outline:2px solid var(--green); outline-offset:3px; }
+    .trace-plot { margin:14px 0; padding:18px 20px 12px; border:1px solid var(--line); background:var(--surface); }
+    .trace-plot-head { display:flex; justify-content:space-between; align-items:baseline; flex-wrap:wrap; gap:9px; }
+    .trace-plot-head h3 { font-size:22px; }
+    .trace-plot-value { color:var(--green); font:16px/1.5 var(--mono); }
+    .trace-plot .research-caption { margin-top:7px; }
+    .trace-plot svg { display:block; width:100%; height:196px; margin-top:10px; overflow:visible; }
+    .trace-plot .plot-axis { fill:var(--dim); font:10px var(--mono); }
+    .trace-plot .plot-grid { stroke:var(--line); stroke-width:1; }
+    .trace-plot .plot-line { fill:none; stroke:var(--green); stroke-width:1.5; }
+    .trace-plot .plot-mark { fill:var(--surface); stroke:var(--green); stroke-width:1.5; }
+    .trace-plot .plot-missing { fill:none; stroke:var(--dim); stroke-width:1.5; }
+    .trace-plot .plot-hit { fill:transparent; }
+    .trace-plot [data-segment] { cursor:pointer; outline:none; }
+    .trace-plot [data-segment][aria-pressed="true"] .plot-mark { fill:var(--green); }
+    .trace-plot [data-segment]:focus-visible .plot-hit { stroke:var(--green); stroke-width:2; }
+    .trace-evidence { padding:21px; border:1px solid var(--line-strong); border-top:2px solid #4d9682; background:var(--surface); }
+    .trace-evidence h2 { font-size:25px; }
+    .trace-measurements { display:grid; grid-template-columns:repeat(3,minmax(0,1fr)); gap:15px; margin:18px 0; }
+    .trace-measurement { padding-left:12px; border-left:1px solid var(--line-strong); }
+    .trace-measurement dt { color:var(--muted); font:11px/1.7 var(--pixel); }
+    .trace-measurement dd { margin:6px 0 0; color:var(--text); font:22px/1.5 var(--mono); }
+    .trace-measurement small { display:block; margin-top:5px; color:var(--dim); font:10px/1.7 var(--mono); }
+    .trace-disclosure { margin-top:16px; padding-top:13px; border-top:1px solid var(--line); }
+    .trace-disclosure > summary { color:var(--green); font:12px/1.6 var(--pixel); }
+    .trace-disclosure pre { max-height:360px; overflow:auto; margin:14px 0 0; padding:14px; border:1px solid var(--line); background:var(--canvas); color:var(--copy); white-space:pre-wrap; overflow-wrap:anywhere; font:11px/1.75 var(--mono); }
+    .trace-source { display:block; margin-top:9px; color:var(--dim); overflow-wrap:anywhere; font:10px/1.7 var(--mono); }
+    .trace-evidence .table-wrap { margin-top:12px; }
+    .trace-outcomes { margin-top:20px; }
+    .trace-outcomes h3 { font-size:20px; }
+    .trace-outcomes .trace-disclosure { margin:0; padding:0; border:0; }
+    .trace-outcomes td { vertical-align:top; }
+    .trace-outcomes pre { max-height:240px; }
+    @media(max-width:760px) { .trace-selectors { grid-template-columns:1fr 1fr; } .trace-selectors .trace-picker:last-child { grid-column:1 / -1; } }
+    @media(max-width:480px) { .trace-selectors { grid-template-columns:1fr; padding:17px; } .trace-run,.trace-evidence { padding:17px; } .trace-plot { padding:16px 14px 10px; } .trace-outcome { padding:12px 14px; gap:12px; } .trace-result-label { max-width:110px; } .trace-result-context { flex:1; font-size:10px; } .trace-result-value { font-size:24px; } .trace-measurements { grid-template-columns:1fr; } .trace-measurement dd { font-size:20px; } .trace-step { padding-inline:10px; } }
     @media(max-width:960px) { .research-lead { grid-template-columns:1fr; gap:23px; } .research-process { grid-template-columns:1fr 1fr; } .process-step:nth-child(2) { border-right:0; } .process-step:nth-child(-n+2) { border-bottom:1px solid var(--line); } }
     @media(max-width:760px) { .workspace-tabs { padding-inline:20px; } .research-evidence { grid-template-columns:1fr; } .research-lead { padding:21px; } .research-campaign .report-link { margin-left:auto; } }
     @media(max-width:480px) { .workspace-tabs { padding-inline:16px; gap:25px; } .research-lead, .evidence-card { padding:19px 17px; } .research-lead h2 { font-size:26px; } .research-lead p { font-size:15px; } .research-process { grid-template-columns:1fr; } .process-step { border-right:0; border-bottom:1px solid var(--line); padding:17px; } .process-step:last-child { border-bottom:0; } .research-entry { padding-left:19px; } .research-entry-card { padding:17px 15px; } .research-entry-head .entry-link { width:100%; margin:3px 0 0; } .research-facts dd { font-size:22px; } .research-campaign { padding:15px 17px; } .research-notebook { padding:17px; } }
@@ -480,6 +589,7 @@
       .batch-count { padding-inline: 17px; }
     }
     @media (max-width: 760px) {
+      :root { --topbar: 71px; }
       .topbar { min-height: 71px; padding: 7px 20px; gap: 18px; }
       .brand img { width: 155px; }
       .top-label { display: none; }
@@ -506,6 +616,7 @@
       .footer span:last-child { text-align: left; }
     }
     @media (max-width: 480px) {
+      :root { --topbar: 67px; }
       .topbar { min-height: 67px; padding-inline: 16px; gap: 12px; }
       .brand img { width: 137px; }
       .connection { max-width: 160px; font-size: 10px; }
@@ -558,7 +669,7 @@
     <span class="top-label">Research observatory</span>
     <div class="connection" role="status"><span id="connection-dot" class="dot"></span><span id="connection-label">Connecting</span><span class="connection-note">Refreshes every 3s</span></div>
   </header>
-  <nav class="workspace-tabs" aria-label="Main navigation"><a id="dashboard-tab" href="/" aria-current="page"><span>01</span> Dashboard</a><a id="research-tab" href="/research"><span>02</span> Research</a></nav>
+  <nav class="workspace-tabs" aria-label="Main navigation"><a id="dashboard-tab" href="/" aria-current="page"><span>01</span> Dashboard</a><a id="research-tab" href="/research"><span>02</span> Research</a><a id="trace-tab" href="/trace"><span>03</span> Trace</a></nav>
   <main>
     <div class="intro">
       <div><p class="eyebrow" id="page-eyebrow">Continuous research · Live monitor</p><h1 id="page-title">Live research.</h1><p id="page-description">Follow the experiment, explore its Loops, and inspect the evidence behind each change.</p></div>
@@ -574,7 +685,7 @@
       <section aria-labelledby="tasks-title"><div class="section-heading"><div><h2 id="tasks-title">Task outcomes</h2><p>Every task in the current batch, in its recorded order.</p></div><div id="tasks-meta" class="section-meta"></div></div><div id="task-outcomes"></div></section>
       <section id="loop-evolution" aria-labelledby="loops-title">
         <div class="section-heading loop-heading"><div><h2 id="loops-title">Loop evolution</h2><p>Saved Python Loops, their recorded paths, and the evidence behind each selection.</p><p id="candidate-meta" class="section-meta"></p></div><div class="loop-task-picker"><label for="loop-task">Execution path task</label><select id="loop-task" aria-describedby="loop-task-hint" disabled><option value="">No task records yet</option></select><small id="loop-task-hint">Compare the same task across all Loops. Scores and costs cover each Loop’s full evaluation.</small></div></div>
-        <p class="loop-legend">Lines show actual recorded component transitions; numbers count those transitions. <strong>Amber marks components absent from the comparison trace.</strong> Open each card to inspect its exact path order, Python source, and source changes.</p>
+        <p class="loop-legend">The strip below compares every saved Loop: each bar is one cell per task, green for an official pass and red for a failure. In the cards, lines show actual recorded component transitions, with line weight and numbers following the recorded count. <strong>Amber marks components and transitions absent from the comparison trace.</strong> Open a card to inspect its exact path order, Python source, and source changes.</p>
         <div id="loop-cards" class="loop-visualization"></div>
         <p class="loop-footnote">Selection comes from host records; incomplete feedback cannot establish a new best Loop. Candidate costs include agent calls only, excluding simulated users, post-run Jev, researcher usage, and earlier recovery attempts. Unknown usage remains unknown. Rationales are researcher claims; recorded paths and outcome differences do not establish causality.</p>
       </section>
@@ -592,6 +703,18 @@
           <section aria-labelledby="research-usage-title"><div class="section-heading"><div><h2 id="research-usage-title">Recorded usage</h2><p>Cumulative spend, including earlier recovery attempts.</p></div></div><div id="research-usage"></div></section>
         </div>
       </div>
+      <div id="trace-content" hidden>
+        <section id="trace-selection" aria-label="Trace selection">
+          <div class="trace-selectors"><div class="trace-picker"><label for="trace-candidate">Candidate</label><select id="trace-candidate" disabled><option value="">Loading candidates…</option></select></div><div class="trace-picker"><label for="trace-task">Task</label><select id="trace-task" disabled><option value="">Loading tasks…</option></select></div><div class="trace-picker"><label for="trace-run">Run</label><select id="trace-run" disabled><option value="">Loading runs…</option></select></div></div>
+          <p id="trace-selection-status" class="research-caption" role="status">Reading recorded trace evidence…</p>
+        </section>
+        <div id="trace-body">
+          <div id="trace-outcome" class="trace-outcome" role="status" aria-label="Whole-task result" hidden></div>
+          <section aria-label="Selected run"><div id="trace-run-summary"></div></section>
+          <section id="trace-signals" aria-labelledby="trace-signals-title"><div class="section-heading"><div><h2 id="trace-signals-title">Jev along the trace</h2><p>Select a segment to inspect the evidence behind all three measurements.</p></div></div><p class="research-caption">The x-axis follows recorded segment order, excluding split parent records. Record IDs may be nonsequential after splitting. Gaps mean missing measurements; values describe each segment, not cumulative task completion.</p><div class="trace-segment-controls"><div class="trace-picker"><label for="trace-segment">Selected segment</label><select id="trace-segment" disabled><option value="">No segments yet</option></select></div><button class="trace-step" id="trace-previous" type="button" disabled aria-label="Previous segment">← Previous</button><button class="trace-step" id="trace-next" type="button" disabled aria-label="Next segment">Next →</button></div><div id="trace-plots"></div></section>
+          <section id="trace-evidence-section" aria-label="Segment evidence"><div id="trace-evidence"></div></section>
+        </div>
+      </div>
       <div id="warnings"></div>
     </div>
     <footer class="footer"><span><strong>Read-only monitor</strong> · Official records remain the source of truth.</span><span id="last-sync">Waiting for the first snapshot</span></footer>
@@ -600,6 +723,7 @@
     'use strict';
     const $ = id => document.getElementById(id);
     const researchPage = location.pathname === '/research';
+    const tracePage = location.pathname === '/trace';
     const esc = value => String(value ?? '').replace(/[&<>"']/g, char => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[char]));
     const known = value => typeof value === 'number' && Number.isFinite(value);
     const number = value => known(value) ? value.toLocaleString('en-US') : 'Unknown';
@@ -634,15 +758,22 @@
       if (['pass','passed','complete','completed','ready','selected','incumbent'].includes(state)) return 'green';
       if (['fail','failed','error','operational_failure','infrastructure_failure','verifier_failure','researcher_failure'].includes(state)) return 'red';
       if (['running','active','evaluating','researching','scoring','analyzing','in_progress','started'].includes(state)) return 'blue';
-      if (['interrupted','budget_exhausted','stopped','paused','missing'].includes(state)) return 'amber';
+      if (['interrupted','budget_exhausted','stopped','paused','missing','repairing','blocked'].includes(state)) return 'amber';
       return '';
     };
     const pill = (label, status = label) => `<span class="pill ${color(status)}">${esc(label)}</span>`;
+    const quietPill = (label, status = label) => {
+      const tone = color(status);
+      return `<span class="pill ${tone === 'red' || tone === 'amber' ? tone : 'quiet'}">${esc(label)}</span>`;
+    };
     const ratio = (value, total) => `${count(value)} <small>/ ${count(total)}</small>`;
     const empty = (title, message = '') => `<div class="empty"><strong>${esc(title)}</strong>${esc(message)}</div>`;
+    const campaignIdentity = c => `<div class="campaign-identity"><span>${esc(c.benchmark || 'Benchmark not recorded')}</span><span>${known(c.task_count) ? `${count(c.task_count)} frozen task${c.task_count === 1 ? '' : 's'}` : 'Task count not recorded'}</span>${c.interface ? `<span>${esc(c.interface)}</span>` : ''}</div>`;
     const openDetails = new Map(), scrollPositions = new Map();
     let viewCampaign = null, taskCampaign = null, selectedTask = '';
     let selectedCampaign = new URLSearchParams(location.search).get('campaign') || '';
+    let traceRequest = Object.fromEntries(['candidate','task','run'].map(key => [key, new URLSearchParams(location.search).get(key) || '']));
+    let selectedSegment = null, traceRunKey = null;
     let snapshot = null, campaignWarnings = [], lastReceived = null, connectionError = '', busy = false, rerun = false, timer = null, controller = null;
     let initialAnchorPending = Boolean(location.hash);
     const pageURL = (path, campaign = selectedCampaign, hash = '') => `${path}${campaign ? `?campaign=${encodeURIComponent(campaign)}` : ''}${hash}`;
@@ -650,6 +781,7 @@
     function updateNavigation() {
       $('dashboard-tab').href = pageURL('/');
       $('research-tab').href = pageURL('/research');
+      $('trace-tab').href = pageURL('/trace');
       document.querySelector('.brand').href = pageURL('/');
     }
     if (researchPage) {
@@ -662,6 +794,17 @@
       $('section-nav').innerHTML = '<a href="#research-overview">Overview ↓</a><a href="#candidate-history">Candidate history ↓</a><a href="#jev-evidence">Jev evidence ↓</a><a href="#research-records">Notebook ↓</a>';
       $('dashboard-content').hidden = true;
       $('research-content').hidden = false;
+    }
+    if (tracePage) {
+      document.title = 'Trace explorer · LoopBlox';
+      $('dashboard-tab').removeAttribute('aria-current');
+      $('trace-tab').setAttribute('aria-current', 'page');
+      $('page-eyebrow').textContent = 'Recorded execution · Jev evidence';
+      $('page-title').textContent = 'Inside the trace.';
+      $('page-description').textContent = 'Explore each segment’s progress, immediate effects, and need for correction alongside its recorded evidence.';
+      $('section-nav').innerHTML = '<a href="#trace-selection">Choose a run ↓</a><a href="#trace-signals">Jev signals ↓</a><a href="#trace-evidence-section">Segment evidence ↓</a>';
+      $('dashboard-content').hidden = true;
+      $('trace-content').hidden = false;
     }
     updateNavigation();
 
@@ -699,7 +842,7 @@
       const picker = $('campaign-select');
       let options = '<option value="">Follow live experiment</option>';
       if (selectedCampaign && !campaigns.some(c => c.id === selectedCampaign)) options += `<option value="${esc(selectedCampaign)}">${esc(selectedCampaign)} · selected campaign</option>`;
-      options += campaigns.map(c => `<option value="${esc(c.id)}">${esc(c.name || c.id)} · ${c.is_live ? 'LIVE' : esc(human(c.status))}</option>`).join('');
+      options += campaigns.map(c => `<option value="${esc(c.id)}">${c.benchmark ? `${esc(c.benchmark)} · ` : ''}${esc(c.name || c.id)} · ${c.is_live ? 'LIVE' : esc(human(c.status))}</option>`).join('');
       if (picker._options !== options) { picker.innerHTML = options; picker._options = options; }
       picker.value = selectedCampaign;
       const live = campaigns.filter(c => c.is_live).length;
@@ -709,19 +852,28 @@
       return selectedCampaign || data.default_campaign || null;
     }
 
+    function supervisionBanner(data) {
+      const s = data.supervision;
+      if (!s) return '';
+      const host = s.host_alive === true ? 'Supervisor process present' : s.host_alive === false ? 'Supervisor process not found' : 'Supervisor presence unknown';
+      return `<section class="supervision" aria-label="Research supervision"><div class="eyebrow">Research supervision</div><div class="supervision-head"><h2>${esc(s.phase || human(s.status))}</h2>${pill(human(s.status), s.status)}</div><div class="supervision-meta"><span>${esc(host)}</span>${s.current_attempt ? `<span>Attempt <span class="mono">${esc(s.current_attempt)}</span></span>` : ''}${known(s.repair_count) ? `<span>${count(s.repair_count)} repair${s.repair_count === 1 ? '' : 's'}</span>` : ''}${known(s.closed_attempts) ? `<span>${count(s.closed_attempts)} closed attempt${s.closed_attempts === 1 ? '' : 's'}</span>` : ''}</div>${data.campaign.closed ? '<p class="supervision-note">The displayed task attempt is closed. Its recorded results remain below; supervision status is shown separately above.</p>' : ''}${s.required_action ? `<p class="supervision-note supervision-action">${esc(s.required_action)}</p>` : ''}</section>`;
+    }
+
     function renderHero(data) {
       const c = data.campaign;
-      if (researchPage) {
-        updateHTML('campaign-hero', `<div class="research-campaign"><span class="campaign-name mono" title="${esc(c.path)}">${esc(c.name || c.id)}</span>${pill(human(c.phase || c.status), c.status)}<a class="report-link" href="${esc(pageURL('/'))}">Live dashboard <span aria-hidden="true">→</span></a></div>${c.error ? `<div class="banner error"><strong>Recorded experiment error</strong><br>${esc(scalar(c.error))}</div>` : ''}`);
+      const supervision = supervisionBanner(data);
+      const attemptPhase = c.closed && data.supervision ? c.status : c.phase || c.status;
+      if (researchPage || tracePage) {
+        updateHTML('campaign-hero', `${supervision}<div class="research-campaign"><div class="research-campaign-info"><div class="campaign-name mono" title="${esc(c.path)}">${esc(c.name || c.id)}</div>${campaignIdentity(c)}</div>${pill(human(attemptPhase), c.status)}<a class="report-link" href="${esc(pageURL('/'))}">Live dashboard <span aria-hidden="true">→</span></a></div>${c.error ? `<div class="banner error"><strong>Recorded experiment error</strong><br>${esc(scalar(c.error))}</div>` : ''}`);
         return;
       }
-      const closed = Boolean(c.closed_at) || ['closed','complete','completed','stopped','failed','interrupted','budget_exhausted'].includes(c.status);
-      const hostWarning = c.host_alive === false && !c.closed_at;
-      const hostState = c.closed_at ? `Closed ${dateTitle(c.closed_at)}` : c.host_alive === true ? 'Host process present' : c.host_alive === false ? 'Host process not found' : 'Host presence unknown';
+      const closed = c.closed;
+      const hostWarning = c.host_alive === false && !closed;
+      const hostState = closed ? c.closed_at ? `Closed ${dateTitle(c.closed_at)}` : 'Closed' : c.host_alive === true ? 'Host process present' : c.host_alive === false ? 'Host process not found' : 'Host presence unknown';
       const started = Number.isFinite(timeMs(c.started_at)) ? new Date(timeMs(c.started_at)).toLocaleString(undefined, {month:'short',day:'numeric',hour:'2-digit',minute:'2-digit'}) : 'Unknown';
       const incumbent = typeof c.incumbent === 'object' && c.incumbent !== null ? c.incumbent.id : c.incumbent;
       const pending = Array.isArray(c.pending_candidates) ? c.pending_candidates.length : c.pending_candidates;
-      updateHTML('campaign-hero', `<div class="hero"><div class="hero-main"><div><div class="eyebrow">${closed ? 'Recorded campaign' : 'Current campaign phase'}</div><div class="hero-heading"><h2>${esc(human(c.phase || c.status))}</h2>${pill(human(c.status), c.status)}</div><div class="campaign-name mono" title="${esc(c.path)}">${esc(c.name || c.id)}</div><div class="campaign-metadata"><span>Task model <span class="mono">${esc(c.model || 'Unknown')}</span></span><span>${esc(hostState)}</span></div></div><div class="hero-time"><div class="eyebrow">Wall duration</div><div class="value mono">${esc(duration(c.wall_seconds))}</div><div class="muted">Started ${esc(started)}</div></div></div><div class="hero-bottom"><span>Checkpoints<strong>${count(c.completed_iterations)}</strong></span><span>Incumbent<strong class="mono">${esc(incumbent || 'Not selected yet')}</strong></span>${known(pending) ? `<span>Pending candidates<strong>${count(pending)}</strong></span>` : ''}<a class="report-link" href="#loop-evolution">Explore Loops <span aria-hidden="true">↓</span></a></div></div>${hostWarning ? '<div class="banner"><strong>Host process not found.</strong> These records do not confirm that the experiment is still running.</div>' : ''}${c.error ? `<div class="banner error"><strong>Recorded experiment error</strong><br>${esc(scalar(c.error))}</div>` : ''}`);
+      updateHTML('campaign-hero', `${supervision}<div class="hero"><div class="hero-main"><div><div class="eyebrow">${data.supervision ? closed ? 'Recorded task attempt' : 'Current task attempt' : closed ? 'Recorded campaign' : 'Current campaign phase'}</div><div class="hero-heading"><h2>${esc(human(attemptPhase))}</h2>${pill(human(c.status), c.status)}</div><div class="campaign-name mono" title="${esc(c.path)}">${esc(c.name || c.id)}</div>${campaignIdentity(c)}<div class="campaign-metadata"><span>Task model <span class="mono">${esc(c.model || 'Unknown')}</span></span><span>${esc(hostState)}</span></div></div><div class="hero-time"><div class="eyebrow">Wall duration</div><div class="value mono">${esc(duration(c.wall_seconds))}</div><div class="muted">Started ${esc(started)}</div></div></div><div class="hero-bottom"><span>Checkpoints<strong>${count(c.completed_iterations)}</strong></span><span>Incumbent<strong class="mono">${esc(incumbent || 'Not selected yet')}</strong></span>${known(pending) ? `<span>Pending candidates<strong>${count(pending)}</strong></span>` : ''}<a class="report-link" href="#loop-evolution">Explore Loops <span aria-hidden="true">↓</span></a></div></div>${hostWarning ? '<div class="banner"><strong>Task host process not found.</strong> These records do not confirm an active task attempt.</div>' : ''}${c.error ? `<div class="banner error"><strong>Recorded experiment error</strong><br>${esc(scalar(c.error))}</div>` : ''}`);
     }
 
     function runActive(run) {
@@ -730,6 +882,7 @@
 
     function renderBatch(data) {
       const ev = data.evaluation;
+      const actionUnit = data.campaign.action_unit || 'actions';
       $('batch-meta').textContent = known(data.campaign.evaluation_workers) ? `${count(data.campaign.evaluation_workers)} evaluation workers` : '';
       if (!ev) {
         updateHTML('batch-summary', empty('No evaluation batch recorded yet', 'Task progress will appear here when a batch is admitted.'));
@@ -738,13 +891,19 @@
         $('tasks-meta').textContent = '';
         return;
       }
-      const percentage = known(ev.finished) && known(ev.planned) && ev.planned > 0 ? Math.min(100, Math.max(0, ev.finished / ev.planned * 100)) : 0;
+      const planned = known(ev.planned) && ev.planned > 0 ? ev.planned : 0;
+      const segment = (value, cls) => planned && known(value) && value > 0 ? `<span class="seg ${cls}" style="width:${value / planned * 100}%"></span>` : '';
+      const segments = segment(ev.passed, 'pass') + segment(ev.failed, 'fail') + segment(ev.missing, 'missing') + segment(ev.active, 'active');
+      const key = (value, cls, label) => known(value) ? `<span><i class="${cls}"></i>${count(value)} ${label}</span>` : '';
+      const queuedLabel = ev.status === 'running' && !data.campaign.closed ? 'queued' : 'not started';
+      const barLabel = `${count(ev.passed)} passed, ${count(ev.failed)} failed, ${count(ev.missing)} finished without a score, ${count(ev.active)} running, ${count(ev.queued)} ${queuedLabel} of ${count(ev.planned)} planned tasks`;
       const runs = Array.isArray(ev.runs) ? ev.runs : [];
-      updateHTML('batch-summary', `<div class="batch"><div class="batch-header"><div><div class="batch-heading"><h3 class="mono">${esc(ev.id)}</h3>${pill(human(ev.status), ev.status)}</div><div class="batch-number">${ev.feedback_ready ? 'Feedback released to the researcher' : 'Feedback has not been released'}</div></div>${pill(ev.feedback_ready ? 'Feedback ready' : 'Feedback pending', ev.feedback_ready ? 'ready' : 'pending')}</div><div class="batch-progress"><div class="progress-track" role="progressbar" aria-label="Task records finished" aria-valuemin="0" aria-valuemax="${known(ev.planned) && ev.planned > 0 ? ev.planned : 100}" aria-valuenow="${known(ev.finished) ? ev.finished : 0}"><div class="progress-fill" style="width:${percentage}%"></div></div><div class="progress-labels"><span>${count(ev.finished)} of ${count(ev.planned)} task records finished</span><span>${count(ev.queued)} ${ev.status === 'running' && !data.campaign.closed_at ? 'queued' : 'not started'}</span></div></div><div class="batch-counts"><div class="batch-count"><div class="number blue-text mono">${count(ev.active)}</div><div class="label">Active tasks / analysis</div><div class="hint">Across the current batch</div></div><div class="batch-count"><div class="number mono">${ratio(ev.scored, ev.planned)}</div><div class="label">Officially scored</div><div class="hint">${count(ev.missing)} finished without a score</div></div><div class="batch-count"><div class="number green-text mono">${count(ev.passed)}</div><div class="label">Official passes</div><div class="hint">${count(ev.failed)} official failures</div></div><div class="batch-count"><div class="number mono">${ratio(ev.jev_completed, ev.planned)}</div><div class="label">Jev analysis complete</div><div class="hint">Required before feedback</div></div></div></div>`);
+      updateHTML('batch-summary', `<div class="batch"><div class="batch-header"><div><div class="batch-heading"><h3 class="mono">${esc(ev.id)}</h3>${pill(human(ev.status), ev.status)}</div><div class="batch-number">${ev.feedback_ready ? 'Feedback released to the researcher' : 'Feedback has not been released'}</div></div>${pill(ev.feedback_ready ? 'Feedback ready' : 'Feedback pending', ev.feedback_ready ? 'ready' : 'pending')}</div><div class="batch-progress"><div class="progress-track" role="img" aria-label="${esc(barLabel)}">${segments}</div><div class="progress-labels"><span class="bar-key">${key(ev.passed, 'pass', 'passed')}${key(ev.failed, 'fail', 'failed')}${ev.missing ? key(ev.missing, 'missing', 'unscored') : ''}${key(ev.active, 'active', 'running')}${key(ev.queued, 'queued', queuedLabel)}</span><span>${count(ev.finished)} of ${count(ev.planned)} task records finished</span></div></div><div class="batch-counts"><div class="batch-count"><div class="number blue-text mono">${count(ev.active)}</div><div class="label">Active tasks / analysis</div><div class="hint">Across the current batch</div></div><div class="batch-count"><div class="number mono">${ratio(ev.scored, ev.planned)}</div><div class="label">Officially scored</div><div class="hint">${count(ev.missing)} finished without a score</div></div><div class="batch-count"><div class="number green-text mono">${count(ev.passed)}</div><div class="label">Official passes</div><div class="hint">${count(ev.failed)} official failures</div></div><div class="batch-count"><div class="number mono">${ratio(ev.jev_completed, ev.planned)}</div><div class="label">Jev analysis complete</div><div class="hint">Required before feedback</div></div></div></div>`);
       const active = runs.filter(runActive);
-      updateHTML('active-lanes', `<div class="lanes-header"><span>ACTIVE LANES</span><span class="line"></span><span>${count(active.length)} recorded</span></div>${active.length ? `<div class="lanes">${active.map(r => `<article class="lane"><div class="lane-top"><span class="mono">${esc(r.directory || 'Run record')}</span>${pill(human(r.phase || r.status), r.status)}</div><h3 class="task-name mono">${esc(r.task_id)}</h3><div class="candidate-name">Candidate <span class="mono">${esc(r.candidate_id)}</span></div><div class="lane-work"><span class="dot live"></span><span>${r.component && r.component_status !== 'started' ? 'Last component: ' : ''}${esc(r.component || human(r.phase || r.status))}${r.component_status ? ` <span class="muted">· ${esc(human(r.component_status))}</span>` : ''}</span></div><div class="lane-footer"><span><strong class="mono">${count(r.actions)}</strong> actions</span><span><strong class="mono">${count(r.agent_model_calls)}</strong> agent calls</span>${known(r.jev_total) ? `<span><strong class="mono">${count(r.jev_completed)}/${count(r.jev_total)}</strong> Jev segments</span>` : ''}<span class="lane-age" title="${esc(dateTitle(r.updated_at))}">Last record <span data-age="${esc(r.updated_at)}">${esc(age(r.updated_at))}</span></span></div></article>`).join('')}</div>` : '<p class="lane-empty">No task or analysis lane is currently recorded as active.</p>'}`);
-      $('tasks-meta').textContent = `${count(runs.length)} task records`;
-      updateHTML('task-outcomes', runs.length ? `<div class="table-wrap"><table class="task-table"><thead><tr><th>Task / candidate</th><th>Task pipeline</th><th>Official result</th><th>Jev analysis</th><th class="num">Actions</th><th class="num">Agent calls</th><th class="num">Agent input tokens</th></tr></thead><tbody>${runs.map(r => `<tr><td><span class="mono cell-primary">${esc(r.task_id)}</span><span class="cell-sub mono">${esc(r.candidate_id)}</span></td><td>${pill(human(r.status === 'running' ? r.phase || r.status : r.status), r.status)}${r.stop_reason ? `<span class="cell-sub" title="${esc(scalar(r.stop_reason))}">${esc(scalar(r.stop_reason).slice(0, 85))}</span>` : ''}</td><td>${r.verdict === 'pass' ? pill('Pass', 'pass') : r.verdict === 'fail' ? pill('Fail', 'fail') : '<span class="muted">Not scored</span>'}</td><td>${pill(human(r.jev_status), r.jev_status)}${known(r.jev_total) ? `<span class="cell-sub">${count(r.jev_completed)} / ${count(r.jev_total)} segments</span>` : ''}</td><td class="num mono">${count(r.actions)}</td><td class="num mono">${number(r.agent_model_calls)}</td><td class="num mono">${number(r.agent_input_tokens)}</td></tr>`).join('')}</tbody></table></div><p class="table-note">Task completion is separate from official scoring. Missing measurements remain unknown.</p>` : empty('The batch is waiting for its first task record'));
+      updateHTML('active-lanes', `<div class="lanes-header"><span>ACTIVE LANES</span><span class="line"></span><span>${count(active.length)} recorded</span></div>${active.length ? `<div class="lanes">${active.map(r => `<article class="lane"><div class="lane-top"><span class="mono">${esc(r.directory || 'Run record')}</span>${pill(human(r.phase || r.status), r.status)}</div><h3 class="task-name mono">${esc(r.task_id)}</h3><div class="candidate-name">Candidate <span class="mono">${esc(r.candidate_id)}</span></div><div class="lane-work"><span class="dot live"></span><span>${r.component && r.component_status !== 'started' ? 'Last component: ' : ''}${esc(r.component || human(r.phase || r.status))}${r.component_status ? ` <span class="muted">· ${esc(human(r.component_status))}</span>` : ''}</span></div><div class="lane-footer"><span><strong class="mono">${count(r.actions)}</strong> ${esc(actionUnit)}</span><span><strong class="mono">${count(r.agent_model_calls)}</strong> agent calls</span>${known(r.jev_total) ? `<span><strong class="mono">${count(r.jev_completed)}/${count(r.jev_total)}</strong> Jev segments</span>` : ''}<span class="lane-age" title="${esc(dateTitle(r.updated_at))}">Last record <span data-age="${esc(r.updated_at)}">${esc(age(r.updated_at))}</span></span></div></article>`).join('')}</div>` : '<p class="lane-empty">No task or analysis lane is currently recorded as active.</p>'}`);
+      const batchCandidates = [...new Set(runs.map(r => r.candidate_id))];
+      $('tasks-meta').textContent = `${count(runs.length)} task records${batchCandidates.length === 1 ? ` · candidate ${batchCandidates[0]}` : ''}`;
+      updateHTML('task-outcomes', runs.length ? `<div class="table-wrap"><table class="task-table"><thead><tr><th>Task / candidate</th><th>Task pipeline</th><th>Official result</th><th>Jev analysis</th><th class="num">${esc(human(actionUnit))}</th><th class="num">Agent calls</th><th class="num">Agent input tokens</th></tr></thead><tbody>${runs.map(r => `<tr><td><span class="mono cell-primary">${esc(r.task_id)}</span><a class="cell-sub entry-link" href="${esc(`${pageURL('/trace', data.campaign.id)}&candidate=${encodeURIComponent(r.candidate_id)}&task=${encodeURIComponent(r.task_id)}`)}">Inspect trace →</a>${batchCandidates.length === 1 ? '' : `<span class="cell-sub mono">${esc(r.candidate_id)}</span>`}</td><td>${quietPill(human(r.status === 'running' ? r.phase || r.status : r.status), r.status)}${r.stop_reason ? `<span class="cell-sub" title="${esc(scalar(r.stop_reason))}">${esc(scalar(r.stop_reason).slice(0, 85))}</span>` : ''}</td><td>${r.verdict === 'pass' ? '<span class="pill green strong">Pass</span>' : r.verdict === 'fail' ? '<span class="pill red strong">Fail</span>' : '<span class="muted">Not scored</span>'}</td><td>${quietPill(human(r.jev_status), r.jev_status)}${known(r.jev_total) ? `<span class="cell-sub">${count(r.jev_completed)} / ${count(r.jev_total)} segments</span>` : ''}</td><td class="num mono">${count(r.actions)}</td><td class="num mono">${number(r.agent_model_calls)}</td><td class="num mono">${number(r.agent_input_tokens)}</td></tr>`).join('')}</tbody></table></div><p class="table-note">${actionUnit === 'code blocks' ? 'Each counted code block may contain multiple API calls. ' : ''}Task completion is separate from official scoring. Missing measurements remain unknown.</p>` : empty('The batch is waiting for its first task record'));
     }
 
     function renderLoops(data) {
@@ -766,9 +925,156 @@
       const checkpoints = Array.isArray(data.checkpoints) ? data.checkpoints : [];
       updateHTML(researchPage ? 'research-checkpoints' : 'iteration-history', checkpoints.length ? [...checkpoints].reverse().map(cp => `<article class="checkpoint"><div class="checkpoint-head"><span class="iteration-dot mono">${count(cp.iteration)}</span><span class="checkpoint-name">Iteration ${count(cp.iteration)} checkpoint</span><span class="checkpoint-selected">${cp.incumbent !== cp.previous_incumbent ? 'Incumbent changed' : 'Incumbent retained'}</span></div><div class="checkpoint-body"><span class="mono">${esc(cp.incumbent || 'Not recorded')}</span>${Array.isArray(cp.candidate_ids) ? ` <span class="muted">· ${count(cp.candidate_ids.length)} candidate${cp.candidate_ids.length === 1 ? '' : 's'}</span>` : ''}${cp.notes ? `<details data-key="${esc(`${data.campaign.id}:checkpoint:${cp.iteration}`)}"><summary>Researcher notes</summary><div class="rationale">${esc(scalar(cp.notes))}</div></details>` : ''}</div></article>`).join('') : empty('The first checkpoint is still ahead', 'Completed iterations will appear after the host records a checkpoint.'));
       const u = data.usage || {}, native = data.native_usage || {};
-      updateHTML(researchPage ? 'research-usage' : 'usage', `<div class="usage-panel"><div class="usage-label"><span>GATEWAY · TASKS + JEV</span><span class="mono">${count(data.cumulative_task_runs)} task runs</span></div><div class="usage-values"><div><div class="usage-value mono">${number(u.model_calls)}</div><div class="usage-key">Model attempts</div></div><div><div class="usage-value mono">${number(u.model_input_tokens)}</div><div class="usage-key">Input tokens</div></div><div><div class="usage-value mono">${number(u.model_output_tokens)}</div><div class="usage-key">Output tokens</div></div></div><div class="usage-native"><div class="usage-label"><span>NATIVE RESEARCHER · SEPARATE USAGE</span></div><div class="usage-values"><div><div class="usage-value mono">${number(native.input_tokens)}</div><div class="usage-key">Reported input tokens</div></div><div><div class="usage-value mono">${number(native.output_tokens)}</div><div class="usage-key">Reported output tokens</div></div></div></div><p class="usage-caption">${known(data.cumulative_charged_seconds) ? `Cumulative charged time: ${esc(duration(data.cumulative_charged_seconds))}. ` : ''}Native usage is reported separately and may have coverage limitations. Unknown values are not treated as zero.</p></div>`);
-      const warnings = [...new Set([...campaignWarnings, ...(Array.isArray(data.warnings) ? data.warnings : []), ...(Array.isArray(data.research?.warnings) ? data.research.warnings : [])])];
+      const nativeScope = data.native_usage_scope === 'current_attempt' ? 'CURRENT ATTEMPT' : data.native_usage_scope === 'cumulative' ? 'CUMULATIVE' : 'SEPARATE USAGE';
+      updateHTML(researchPage ? 'research-usage' : 'usage', `<div class="usage-panel"><div class="usage-label"><span>GATEWAY · TASKS + JEV · CUMULATIVE</span><span class="mono">${count(data.cumulative_task_runs)} task runs</span></div><div class="usage-values"><div><div class="usage-value mono">${number(u.model_calls)}</div><div class="usage-key">Model attempts</div></div><div><div class="usage-value mono">${number(u.model_input_tokens)}</div><div class="usage-key">Input tokens</div></div><div><div class="usage-value mono">${number(u.model_output_tokens)}</div><div class="usage-key">Output tokens</div></div></div><div class="usage-native"><div class="usage-label"><span>NATIVE RESEARCHER · ${nativeScope}</span></div><div class="usage-values"><div><div class="usage-value mono">${number(native.input_tokens)}</div><div class="usage-key">Reported input tokens</div></div><div><div class="usage-value mono">${number(native.output_tokens)}</div><div class="usage-key">Reported output tokens</div></div></div></div><p class="usage-caption">${known(data.cumulative_charged_seconds) ? `Cumulative charged time: ${esc(duration(data.cumulative_charged_seconds))}. ` : ''}${data.native_usage_scope === 'current_attempt' ? 'Native tokens cover this attempt only; native usage from prior attempts is excluded. ' : 'Native usage is reported separately and may have coverage limitations. '}Unknown values are not treated as zero.</p></div>`);
+    }
+
+    function renderWarnings(data) {
+      const warnings = [...new Set([...campaignWarnings, ...(Array.isArray(data.warnings) ? data.warnings : []), ...(Array.isArray(data.research?.warnings) ? data.research.warnings : []), ...(Array.isArray(data.trace?.warnings) ? data.trace.warnings : [])])];
       updateHTML('warnings', warnings.length ? `<details class="warnings" data-key="${esc(`${data.campaign.id}:warnings`)}"><summary>${count(warnings.length)} record notice${warnings.length === 1 ? '' : 's'}</summary><ul>${warnings.map(w => `<li>${esc(w)}</li>`).join('')}</ul></details>` : '');
+    }
+
+    function renderResearch(data) {
+      const research = data.research || {}, overview = research.overview || {};
+      const candidates = Array.isArray(research.candidates) ? research.candidates : [];
+      const excerpt = (value, limit = 580) => {
+        const text = scalar(value).trim();
+        return esc(text.length > limit ? `${text.slice(0, limit).trimEnd()}…` : text);
+      };
+      const source = value => value ? `<span class="research-source">Source: ${esc(value)}</span>` : '';
+      const signed = value => known(value) ? `${value > 0 ? '+' : ''}${number(value)}` : 'Unknown';
+      const question = research.question ? scalar(research.question).split(/(?<=\.)\s+/).slice(0, 2).join(' ') : 'The research question will appear when the campaign freezes its public materials.';
+      updateHTML('research-summary', `<div class="research-lead"><div><div class="eyebrow">One benchmark · Successive ideas</div><h2>${overview.baseline ? `<span class="mono">${esc(overview.baseline)}</span> <span class="green-text">→</span> <span class="mono">${esc(overview.incumbent || 'Selection pending')}</span>` : 'The opening baseline is ahead'}</h2><p>${esc(question)}</p><p class="research-caption">Baseline → current incumbent</p></div><dl class="research-facts"><div><dt>Saved Loops</dt><dd>${count(overview.candidates)} <small>${count(overview.evaluated_candidates)} feedback ready</small></dd></div><div><dt>Checkpoints</dt><dd>${count(overview.completed_iterations)}</dd></div><div><dt>Officially scored</dt><dd>${count(overview.scored_runs)} <small>/ ${count(overview.attempted_runs)} attempted</small></dd></div><div><dt>Missing scores</dt><dd>${count(overview.missing_scores)}</dd></div></dl></div><div class="research-process"><div class="process-step"><span class="eyebrow">01 · Propose</span><h3>Save a Python Loop</h3><p>The researcher records a candidate and its rationale within the frozen component boundary.</p></div><div class="process-step"><span class="eyebrow">02 · Evaluate</span><h3>Run the same tasks</h3><p>Fresh task runs preserve official outcomes, failures, and recorded cost.</p></div><div class="process-step"><span class="eyebrow">03 · Analyze</span><h3>Read the evidence</h3><p>Post-run Jev analysis completes before the batch’s feedback is released.</p></div><div class="process-step"><span class="eyebrow">04 · Checkpoint</span><h3>Keep the best Loop</h3><p>The host applies the ranking rule; the researcher records notes for the next iteration.</p></div></div><details class="evidence-detail" data-key="research-protocol"><summary>Research question, selection rule & evidence scope</summary><div class="rationale">${esc(scalar(research.question) || 'Question not recorded.')}</div><div class="rationale"><strong>Selection rule</strong><br>${esc(scalar(research.ranking_rule) || 'Ranking rule not recorded.')}</div><div class="rationale">${esc(research.scope || 'Public evidence in the selected campaign.')}</div>${source('experiment.json · progress.json')}</details>`);
+      $('history-meta').textContent = `${count(candidates.length)} saved Loop${candidates.length === 1 ? '' : 's'}`;
+      updateHTML('research-candidates', candidates.length ? candidates.map(candidate => {
+        const narrative = candidate.researcher_summary || candidate.rationale_excerpt || candidate.rationale;
+        const narrativeSource = candidate.researcher_summary ? candidate.researcher_summary_source : candidate.source;
+        const analysis = candidate.jev || {};
+        const delta = candidate.delta;
+        return `<article class="research-entry ${candidate.current ? 'incumbent' : ''}" id="research-${esc(candidate.id)}"><div class="research-entry-card"><div class="research-entry-head"><h3>${esc(candidate.id)}</h3>${pill(candidate.selection || 'Selection not recorded', candidate.current ? 'incumbent' : candidate.feedback_ready ? 'complete' : candidate.evaluation_status)}<a class="entry-link" href="${esc(pageURL('/', data.campaign.id, `#loop-${encodeURIComponent(candidate.id)}`))}">Explore Loop →</a></div><div class="research-entry-meta"><span>${candidate.iteration === 0 ? 'Opening baseline' : `Iteration ${count(candidate.iteration)}`}</span><span><strong>${count(candidate.passed)} / ${count(candidate.planned)}</strong> official passes</span><span><strong>${count(candidate.scored)}</strong> scored · <strong>${count(candidate.missing)}</strong> missing</span></div><p class="research-entry-copy">${narrative ? excerpt(narrative) : 'No researcher rationale has been recorded yet.'}</p>${narrative ? `<span class="research-source">Researcher’s ${candidate.researcher_summary ? 'notebook account' : 'rationale'} · ${esc(narrativeSource || 'Public candidate record')}</span>` : ''}${delta ? `<p class="research-caption">Compared with ${esc(candidate.reference)}: ${signed(delta.passed)} official passes · ${signed(delta.agent_input_tokens)} agent input tokens · ${signed(delta.agent_model_calls)} agent calls.</p>` : ''}<details data-key="research-candidate:${esc(candidate.id)}"><summary>Rationale & evaluation evidence</summary>${candidate.researcher_summary ? `<div class="rationale">${esc(candidate.researcher_summary)}</div>${source(candidate.researcher_summary_source)}` : ''}<div class="rationale">${esc(candidate.rationale || 'No rationale recorded.')}</div>${source(candidate.source)}<div class="research-entry-meta"><span>Feedback: <strong>${candidate.feedback_ready ? 'Ready' : 'Not released'}</strong></span><span>Evaluation: <strong>${esc(human(candidate.evaluation_status))}</strong></span><span>Agent input: <strong>${number(candidate.agent_input_tokens)}</strong></span><span>Agent calls: <strong>${number(candidate.agent_model_calls)}</strong></span><span>Post-run Jev: <strong>${count(analysis.completed)} / ${count(analysis.runs)}</strong> records complete</span><span>Online Judge: <strong>${count(analysis.online_judge_invocations)}</strong> invocations</span></div>${source(candidate.evaluation_source)}</details></div></article>`;
+      }).join('') : empty('No saved candidates yet', 'The opening baseline and each subsequent research idea will appear here.'));
+
+      const jev = research.jev || {}, online = jev.online_judge || {}, config = jev.configuration || {}, use = jev.evidence_use || {};
+      const excerpts = Array.isArray(use.excerpts) ? use.excerpts : [];
+      const metricLabels = {progress:'Task progress', action_effectiveness:'Immediate action effectiveness', recovery_needed:'Recovery needed'};
+      const schemas = Object.entries(jev.schemas || {});
+      const measurementRows = schemas.map(([schema, group]) => `<div class="research-caption">Schema ${esc(schema)} · ${count(group.runs)} task runs · ${count(group.segments)} segments</div><div class="table-wrap"><table><thead><tr><th>Measurement</th><th class="num">Measured</th><th class="num">Missing</th><th class="num">Recorded range</th></tr></thead><tbody>${Object.entries(group.measurements || {}).map(([metric, values]) => `<tr><td>${esc(metricLabels[metric] || human(metric))}</td><td class="num">${count(values.measured)}</td><td class="num">${count(values.missing)}</td><td class="num">${known(values.minimum) && known(values.maximum) ? `${number(values.minimum)} – ${number(values.maximum)}` : 'Unknown'}</td></tr>`).join('')}</tbody></table></div>${Object.keys(group.missing_reasons || {}).length ? `<p class="research-caption">Missing action-effectiveness reasons: ${Object.entries(group.missing_reasons).map(([reason, total]) => `${esc(human(reason))} (${count(total)})`).join(' · ')}.</p>` : ''}`).join('');
+      const questions = Object.entries(config.questions || {});
+      updateHTML('research-jev', `<div class="research-evidence"><article class="evidence-card"><div class="eyebrow">After every development run</div><h3>Post-run analysis</h3><p>Jev judges public trace segments for task progress, immediate action effectiveness, and the need for correction. These measurements accompany the official task outcome.</p><div class="evidence-stats"><div><strong>${count(jev.completed_runs)} <small class="muted">/ ${count(overview.attempted_runs)}</small></strong><span>Attempted runs analyzed</span></div><div><strong>${count(jev.segments)}</strong><span>Recorded segments</span></div><div><strong>${number(jev.model_calls)}</strong><span>Jev model attempts</span></div></div><p class="research-caption">${known(config.observations_per_segment) ? `${count(config.observations_per_segment)} observations per full segment. ` : ''}${known(jev.missing_runs) ? `${count(jev.missing_runs)} attempted ${jev.missing_runs === 1 ? 'run has' : 'runs have'} no analysis record. ` : ''}Jev judgments do not replace official scores.</p></article><article class="evidence-card"><div class="eyebrow">Optional · Inside a candidate Loop</div><h3>Online Judge</h3><p>A Loop may invoke the Judge component to ask typed questions while the task is running. Python decides how to use the returned answer.</p><div class="evidence-stats"><div><strong>${count(online.invocations)}</strong><span>Recorded invocations</span></div><div><strong>${count(online.runs)}</strong><span>Runs using Judge</span></div><div><strong>${number(online.model_calls)}</strong><span>Owned model attempts</span></div></div><p class="research-caption">${online.invocations === 0 ? 'No online Judge invocations appear in the available task records. ' : ''}Coverage: ${count(online.recorded_runs)} task records${known(online.missing_summaries) ? `; ${count(online.missing_summaries)} unavailable` : ''}. Online Judge usage is charged to its task.</p></article></div><details class="evidence-detail" data-key="research-jev-measurements"><summary>Measurement coverage & frozen questions</summary>${measurementRows || '<p class="rationale">No segment measurements have been recorded yet.</p>'}<p class="research-caption">Recorded ranges describe the available measurements; they are not campaign scores. Schemas are kept separate. Missing values remain unknown.</p><p class="research-caption">Analysis model: ${esc(config.model || 'Not recorded')} · ${number(jev.input_tokens)} input tokens · ${number(jev.output_tokens)} output tokens · ${number(jev.incomplete_usage_calls)} attempts with incomplete usage.</p>${questions.map(([name, question]) => `<details data-key="research-jev-question:${esc(name)}" class="checkpoint"><summary>${esc(metricLabels[name] || human(name))}</summary><div class="rationale">${esc(question.instructions || '')}</div>${Array.isArray(question.criteria) ? `<ol class="rationale">${question.criteria.map(item => `<li>${esc(item)}</li>`).join('')}</ol>` : ''}</details>`).join('')}${source('jev-config.json · evaluations/<evaluation>/<run>/jev.json')}</details><div class="evidence-detail"><h3>The researcher’s account of Jev</h3>${excerpts.length ? excerpts.slice(0, 3).map(item => `<div class="checkpoint"><p class="research-caption">${esc(item.title || 'Research notebook')}</p><p class="research-entry-copy">${excerpt(item.text, 650)}</p>${source(item.source)}</div>`).join('') : '<p class="rationale">No matching Jev interpretation excerpt was found in the public notebook.</p>'}<p class="research-caption">${esc(use.explanation || 'Available Jev evidence does not by itself establish whether the researcher used it. Researcher notes are claims, not a log of artifact reads.')}</p>${excerpts.length ? `<details data-key="research-jev-notes"><summary>Read all recorded Jev passages</summary>${excerpts.map(item => `<div class="rationale"><strong>${esc(item.title || 'Research notebook')}</strong><br>${esc(item.text)}</div>${source(item.source)}`).join('')}</details>` : ''}</div>`);
+      updateHTML('research-notes-text', research.notes?.text ? `<details class="checkpoint" data-key="research-full-notebook"><summary>Full public notebook</summary><div class="rationale">${esc(research.notes.text)}</div>${source(research.notes.source)}</details>` : '<p class="research-caption">No public notebook has been saved yet.</p>');
+    }
+
+    const traceMetricKeys = ['progress','action_effectiveness','recovery_needed'];
+    const traceMetricCopy = {
+      progress: ['Segment progress', 'New progress supported by this segment’s evidence; this is not a cumulative completion score.'],
+      action_effectiveness: ['Immediate effectiveness', 'How well the observed actions achieved their immediate purposes. Missing outcomes remain unknown.'],
+      recovery_needed: ['Need for correction', 'Recorded probability that the approach needs correction. This does not measure recovery success.']
+    };
+    const traceValue = value => known(value) ? String(value) : 'Missing';
+    const traceSource = value => value ? `<span class="trace-source">${esc(value)}</span>` : '';
+    const traceRaw = (key, label, value, source) => `<details class="trace-disclosure" data-key="${esc(key)}"><summary>${esc(label)}</summary>${traceSource(source)}${value == null ? '<p class="research-caption">Not recorded.</p>' : `<pre>${esc(scalar(value))}</pre>`}</details>`;
+
+    function traceOptions(id, entries, selected, placeholder, label = item => item.id) {
+      const picker = $(id);
+      const options = entries.length ? entries.map(item => `<option value="${esc(item.id)}">${esc(label(item))}</option>`).join('') : `<option value="">${esc(placeholder)}</option>`;
+      if (picker._options !== options) { picker.innerHTML = options; picker._options = options; }
+      picker.value = selected == null ? '' : String(selected);
+      picker.disabled = !entries.length;
+    }
+
+    function tracePlot(key, trace, segments) {
+      const metric = trace.metrics?.[key] || {};
+      const [label, description] = traceMetricCopy[key];
+      const chosen = segments.find(segment => String(segment.id) === selectedSegment);
+      const scale = known(metric.min) && known(metric.max) && metric.max > metric.min;
+      const heading = `<div class="trace-plot-head"><h3>${esc(label)}</h3><span class="trace-plot-value">${traceValue(chosen?.[key])}${scale ? ` <small>/ ${traceValue(metric.max)}</small>` : ''}</span></div><p class="research-caption">${esc(description)}</p>`;
+      if (!scale) return `<article class="trace-plot">${heading}<p class="research-caption">The scale is not recorded. Exact values remain available in the selected segment.</p></article>`;
+      const width = Math.max(290, $('trace-plots').clientWidth - (innerWidth <= 480 ? 30 : 42));
+      const height = 196, left = 35, right = width - 12, top = 14, bottom = 153;
+      const x = index => segments.length === 1 ? (left + right) / 2 : left + index * (right - left) / (segments.length - 1);
+      const y = value => bottom - (value - metric.min) * (bottom - top) / (metric.max - metric.min);
+      const plotted = value => known(value) && value >= metric.min && value <= metric.max;
+      const selectedIndex = segments.findIndex(segment => String(segment.id) === selectedSegment);
+      let paths = '', path = '';
+      for (const [index, segment] of segments.entries()) {
+        if (plotted(segment[key])) path += `${path ? ' L' : 'M'}${x(index).toFixed(2)},${y(segment[key]).toFixed(2)}`;
+        else if (path) { paths += `<path class="plot-line" d="${path}"/>`; path = ''; }
+      }
+      if (path) paths += `<path class="plot-line" d="${path}"/>`;
+      const ticks = [metric.min, (metric.min + metric.max) / 2, metric.max].map(value => `<line class="plot-grid" x1="${left}" x2="${right}" y1="${y(value)}" y2="${y(value)}"/><text class="plot-axis" x="${left - 9}" y="${y(value) + 4}" text-anchor="end">${esc(String(value))}</text>`).join('');
+      const step = Math.max(1, Math.ceil(segments.length / Math.max(2, Math.floor(width / 60))));
+      const ordinals = segments.map((segment, index) => index === 0 || index === segments.length - 1 || index % step === 0 ? `<text class="plot-axis" x="${x(index)}" y="${bottom + 22}" text-anchor="middle">${index + 1}</text>` : '').join('');
+      const marks = segments.map((segment, index) => {
+        const value = segment[key], valid = plotted(value), px = x(index), py = valid ? y(value) : bottom + 1;
+        const active = String(segment.id) === selectedSegment;
+        const description = `Segment ${index + 1}, record ${segment.id}: ${label} ${known(value) ? value : 'missing'}${segment[`${key}_missing_reason`] ? `, ${human(segment[`${key}_missing_reason`])}` : ''}`;
+        return `<g role="button" tabindex="${active ? 0 : -1}" aria-label="${esc(description)}" aria-pressed="${active}" data-segment="${esc(segment.id)}" data-metric="${key}"><title>${esc(description)}</title><circle class="plot-hit" cx="${px}" cy="${py}" r="11"/>${valid ? `<circle class="plot-mark" cx="${px}" cy="${py}" r="${active ? 5 : 3.5}"/>` : `<path class="plot-missing" d="M${px - 3},${py - 3}L${px + 3},${py + 3}M${px - 3},${py + 3}L${px + 3},${py - 3}"/>`}</g>`;
+      }).join('');
+      return `<article class="trace-plot">${heading}<svg viewBox="0 0 ${width} ${height}" role="group" aria-label="${esc(label)} by recorded segment order">${ticks}${selectedIndex >= 0 ? `<line x1="${x(selectedIndex)}" x2="${x(selectedIndex)}" y1="${top}" y2="${bottom}" stroke="var(--green)" stroke-opacity=".25"/>` : ''}${paths}${marks}${ordinals}<text class="plot-axis" x="${(left + right) / 2}" y="${height - 2}" text-anchor="middle">Segment order</text></svg><p class="research-caption">${count(segments.filter(segment => known(segment[key])).length)} / ${count(segments.length)} measured · Missing values use × markers, without a score.</p></article>`;
+    }
+
+    function renderTraceEvidence(trace, segments) {
+      const index = segments.findIndex(segment => String(segment.id) === selectedSegment);
+      const segment = segments[index];
+      if (!segment) { updateHTML('trace-evidence', ''); return; }
+      const key = `${trace.id}:segment:${segment.id}`;
+      const invocations = Array.isArray(segment.invocations) ? segment.invocations : [];
+      const facts = segment.facts || {};
+      const usage = segment.execution?.agent_usage || {};
+      const outcomes = Array.isArray(segment.input?.outcome) ? segment.input.outcome : [];
+      const outcomeTable = `<div class="trace-outcomes"><h3>Observed action outcomes</h3>${outcomes.length ? `<div class="table-wrap"><table><thead><tr><th>Step</th><th>Execution</th><th>Result status</th><th>Effects</th></tr></thead><tbody>${outcomes.map((outcome, position) => `<tr><td class="mono">${count(outcome.step)}</td><td class="mono">${esc(outcome.execution_id || 'Not recorded')}${outcome.action_id ? `<span class="cell-sub">${esc(outcome.action_id)}</span>` : ''}</td><td>${quietPill(human(outcome.status), outcome.status)}</td><td>${esc(human(outcome.effects))}</td></tr><tr><td colspan="4">${traceRaw(`${key}:outcome:${position}`, 'Recorded action and result', {action:outcome.action,result:outcome.result}, `${segment.input_source}/outcome/${position}`)}</td></tr>`).join('')}</tbody></table></div>` : '<p class="research-caption">No observed action outcomes are recorded for this segment.</p>'}</div>`;
+      const measurements = traceMetricKeys.map(metric => `<div class="trace-measurement"><dt>${esc(traceMetricCopy[metric][0])}</dt><dd>${traceValue(segment[metric])}</dd>${known(segment[`${metric}_confidence`]) ? `<small>Recorded confidence ${traceValue(segment[`${metric}_confidence`])}</small>` : ''}${segment[`${metric}_missing_reason`] ? `<small>${esc(human(segment[`${metric}_missing_reason`]))}</small>` : ''}</div>`).join('');
+      updateHTML('trace-evidence', `<article class="trace-evidence"><div class="trace-run-head"><h2>Segment ${index + 1} <span class="muted">/ ${count(segments.length)}</span></h2>${pill(`Jev segment: ${human(segment.status)}`, segment.status)}</div><div class="trace-run-meta"><span>Record <strong class="mono">${esc(segment.id)}</strong></span>${known(segment.first_step) && known(segment.last_step) ? `<span>Steps ${segment.first_step}–${segment.last_step}</span>` : ''}${known(facts.observations) ? `<span>${count(facts.observations)} observations</span>` : ''}<span>${count(invocations.length)} component invocations</span><span>${number(usage.model_calls)} agent attempts</span><span>${number(usage.model_input_tokens)} input tokens</span><span>${number(usage.model_output_tokens)} output tokens</span>${segment.parent_segment != null ? `<span>Split from record ${esc(segment.parent_segment)}</span>` : ''}</div><dl class="trace-measurements">${measurements}</dl><p class="research-caption">Confidence is shown only where recorded. These judgments describe public evidence; they do not replace the official outcome or establish causes.</p>${outcomeTable}${traceRaw(`${key}:response`, 'Exact Jev response', segment.response, segment.response_source)}${traceRaw(`${key}:input`, 'Segment evidence · full public record', segment.input, segment.input_source)}${traceRaw(`${key}:attempts`, 'Jev attempts · exact requests and recorded usage', segment.attempts, segment.attempts_source)}<details class="trace-disclosure" data-key="${esc(`${key}:invocations`)}"><summary>Component invocation facts · ${count(invocations.length)}</summary><div class="table-wrap"><table><thead><tr><th>ID</th><th>Component</th><th>Status</th></tr></thead><tbody>${invocations.map(call => `<tr><td class="mono">${esc(call.id)}</td><td class="mono">${esc(call.component || call.name || 'Not recorded')}</td><td>${quietPill(human(call.status), call.status)}</td></tr>`).join('')}</tbody></table></div>${traceRaw(`${key}:invocation-records`, 'Full recorded invocation arguments and results', invocations, trace.trace_artifact)}${traceRaw(`${key}:execution`, 'Recorded participation and owned usage', segment.execution, trace.artifact)}</details>${traceRaw(`${key}:facts`, 'Segment facts', segment.facts, `${trace.artifact}#${segment.evidence_pointer}/facts`)}</article>`);
+    }
+
+    function renderTraceSegments() {
+      const trace = snapshot?.trace?.trace;
+      const segments = trace?.segments || [];
+      traceOptions('trace-segment', segments, selectedSegment, 'No segment measurements yet', (segment) => `Segment ${segments.indexOf(segment) + 1} · record ${segment.id}${segment.parent_segment != null ? ` · split from ${segment.parent_segment}` : ''}`);
+      const index = segments.findIndex(segment => String(segment.id) === selectedSegment);
+      $('trace-previous').disabled = index <= 0;
+      $('trace-next').disabled = index < 0 || index >= segments.length - 1;
+      const focusedMetric = document.activeElement?.closest('[data-metric]')?.dataset.metric;
+      updateHTML('trace-plots', segments.length ? traceMetricKeys.map(key => tracePlot(key, trace, segments)).join('') : empty('No segment measurements yet', 'Recorded Jev analysis will appear here as it becomes available. Check the run status and any record notices for details.'));
+      if (focusedMetric) [...$('trace-plots').querySelectorAll('[data-metric]')].find(node => node.dataset.metric === focusedMetric && node.dataset.segment === selectedSegment)?.focus({preventScroll:true});
+      renderTraceEvidence(trace, segments);
+    }
+
+    function selectTraceSegment(id) {
+      if (!snapshot?.trace?.trace?.segments.some(segment => String(segment.id) === String(id))) return;
+      selectedSegment = String(id);
+      renderTraceSegments();
+    }
+
+    function renderTrace(data) {
+      const view = data.trace || {}, selected = view.selected || {}, trace = view.trace;
+      const candidates = view.candidates || [], tasks = view.tasks || [], runs = view.runs || [];
+      const matching = runs.filter(run => (!selected.candidate_id || run.candidate_id === selected.candidate_id) && (!selected.task_id || run.task_id === selected.task_id));
+      traceOptions('trace-candidate', candidates, selected.candidate_id || traceRequest.candidate, 'No evaluated candidates yet');
+      traceOptions('trace-task', tasks, selected.task_id || traceRequest.task, 'No task records yet');
+      traceOptions('trace-run', matching, selected.run_id, 'No matching run recorded', run => `${run.id} · ${human(run.status)}`);
+      $('trace-selection-status').textContent = trace ? `${trace.candidate_id} · ${trace.task_id} · ${trace.id}${traceRequest.candidate || traceRequest.task || traceRequest.run ? ' · Selection fixed' : ' · Following the latest available analysis'}` : 'No matching task run has been recorded yet.';
+      $('trace-body').hidden = false;
+      $('trace-outcome').hidden = !trace;
+      if (!trace) {
+        updateHTML('trace-run-summary', empty('Waiting for a task run', 'Choose a candidate and task with a recorded run, or keep this page open as the experiment adds records.'));
+        $('trace-signals').hidden = true;
+        updateHTML('trace-evidence', '');
+        return;
+      }
+      $('trace-signals').hidden = false;
+      const segments = trace.segments || [];
+      const nextKey = `${data.campaign.id}:${trace.id}`;
+      if (traceRunKey !== nextKey || !segments.some(segment => String(segment.id) === selectedSegment)) selectedSegment = segments.length ? String(segments[0].id) : null;
+      traceRunKey = nextKey;
+      const outcome = trace.official_result === 'pass'
+        ? {label:'Success', tone:'green', detail:'Passed the official task evaluation.'}
+        : trace.official_result === 'fail'
+          ? {label:'Failure', tone:'red', detail:'Did not pass the official task evaluation.'}
+          : {label:'Not scored', tone:'amber', detail:`${human(trace.status)} · No official result recorded.`};
+      updateHTML('trace-outcome', `<div><div class="trace-result-label">Whole task · Official result</div><strong class="trace-result-value ${outcome.tone}">${outcome.label}</strong></div><div class="trace-result-context">${esc(trace.candidate_id)} · ${esc(trace.task_id)}<p>${esc(outcome.detail)}</p></div>`);
+      updateHTML('trace-run-summary', `<div class="trace-run"><div class="trace-run-head"><h2 class="mono">${esc(trace.task_id)}</h2></div><div class="trace-run-meta"><span>Candidate ${esc(trace.candidate_id)}</span><span>Task ${esc(human(trace.status))}</span><span>Jev ${esc(human(trace.jev_status))}</span><span>${count(segments.length)} recorded leaf segments</span><span>${esc(trace.schema_version || 'Schema not recorded')}</span></div>${typeof trace.task?.instruction === 'string' ? `<p class="research-caption">${esc(trace.task.instruction.length > 300 ? trace.task.instruction.slice(0, 300) + '…' : trace.task.instruction)}</p>` : ''}${traceRaw(`${trace.id}:task`, 'Public task', trace.task, trace.trace_artifact)}${traceRaw(`${trace.id}:provenance`, 'Recorded scales, provenance and split parents', {metrics:trace.metrics, artifact:trace.artifact, trace_artifact:trace.trace_artifact, source_trace_sha256:trace.source_trace_sha256, split_parents:trace.split_parents}, trace.artifact)}</div>`);
+      renderTraceSegments();
     }
 
     function render(data) {
@@ -777,16 +1083,23 @@
       $('empty-state').hidden = true;
       $('dashboard').hidden = false;
       renderHero(data);
-      renderBatch(data);
-      renderLoops(data);
-      renderHistory(data);
+      if (tracePage) renderTrace(data);
+      else if (researchPage) renderResearch(data);
+      else { renderBatch(data); renderLoops(data); }
+      if (!tracePage) renderHistory(data);
+      renderWarnings(data);
+      if (initialAnchorPending) {
+        initialAnchorPending = false;
+        const target = document.getElementById(location.hash.slice(1));
+        if (target) target.scrollIntoView();
+      }
       updateConnection();
     }
 
     function updateConnection() {
       const stale = Boolean(connectionError) || (lastReceived !== null && Date.now() - lastReceived > 12000);
       $('connection-dot').className = `dot ${stale ? 'error' : lastReceived ? 'live' : ''}`;
-      $('connection-label').textContent = stale ? 'Connection interrupted' : lastReceived ? 'Dashboard connected' : 'Connecting';
+      $('connection-label').textContent = stale ? 'Connection interrupted' : lastReceived ? (tracePage ? 'Trace connected' : researchPage ? 'Research connected' : 'Dashboard connected') : 'Connecting';
       const banner = $('connection-banner');
       banner.hidden = !stale;
       banner.textContent = stale ? `${snapshot ? 'Showing the last received snapshot. ' : 'Waiting for a connection. '}${connectionError || 'A fresh snapshot has not arrived.'} Retrying automatically.` : '';
@@ -831,9 +1144,20 @@
           $('empty-state').hidden = false;
           updateHTML('empty-state', '<strong>No campaign records found</strong><p>Keep this page open. When a campaign appears in the monitored directory, its progress will show here automatically.</p>');
         } else {
-          if (taskCampaign !== campaign) { selectedTask = ''; taskCampaign = campaign; }
-          const taskQuery = selectedTask ? `&task=${encodeURIComponent(selectedTask)}` : '';
-          const data = await fetchJSON(`/api/snapshot?campaign=${encodeURIComponent(campaign)}${taskQuery}`, requestController.signal);
+          if (taskCampaign !== campaign) {
+            selectedTask = '';
+            if (taskCampaign !== null) {
+              traceRequest = {candidate:'',task:'',run:''};
+              if (tracePage) {
+                const url = new URL(location.href);
+                for (const key of ['candidate','task','run']) url.searchParams.delete(key);
+                history.replaceState(null, '', url);
+              }
+            }
+            taskCampaign = campaign;
+          }
+          const viewQuery = tracePage ? `&view=trace${Object.entries(traceRequest).filter(([,value]) => value).map(([key,value]) => `&${key}=${encodeURIComponent(value)}`).join('')}` : researchPage ? '&view=research' : selectedTask ? `&task=${encodeURIComponent(selectedTask)}` : '';
+          const data = await fetchJSON(`/api/snapshot?campaign=${encodeURIComponent(campaign)}${viewQuery}`, requestController.signal);
           if (selection !== selectedCampaign || requestController.signal.aborted) return;
           if (!data.campaign || !data.campaign.id) throw new Error('The monitor returned an incomplete snapshot.');
           connectionError = '';
@@ -858,10 +1182,13 @@
       selectedCampaign = event.target.value;
       selectedTask = '';
       taskCampaign = null;
+      traceRequest = {candidate:'',task:'',run:''};
       const url = new URL(location.href);
       if (selectedCampaign) url.searchParams.set('campaign', selectedCampaign);
       else url.searchParams.delete('campaign');
+      for (const key of ['candidate','task','run']) url.searchParams.delete(key);
       history.replaceState(null, '', url);
+      updateNavigation();
       refresh();
     });
     $('loop-task').addEventListener('change', event => {
@@ -870,10 +1197,52 @@
       if (selectedTask !== shownTask) $('loop-task-hint').textContent = `Loading paths for ${selectedTask}. Cards still show ${shownTask || 'the last snapshot'} until the update arrives.`;
       refresh();
     });
+    for (const key of ['candidate','task','run']) $('trace-' + key).addEventListener('change', event => {
+      const current = snapshot?.trace?.selected || {};
+      traceRequest = {candidate:traceRequest.candidate || current.candidate_id || '',task:traceRequest.task || current.task_id || '',run:''};
+      traceRequest[key] = event.target.value;
+      const url = new URL(location.href);
+      for (const [name,value] of Object.entries(traceRequest)) {
+        if (value) url.searchParams.set(name,value);
+        else url.searchParams.delete(name);
+      }
+      history.replaceState(null, '', url);
+      $('trace-selection-status').textContent = 'Loading the selected run’s recorded evidence…';
+      $('trace-body').hidden = true;
+      refresh();
+    });
+    $('trace-segment').addEventListener('change', event => selectTraceSegment(event.target.value));
+    const moveTraceSegment = offset => {
+      const segments = snapshot?.trace?.trace?.segments || [];
+      const index = segments.findIndex(segment => String(segment.id) === selectedSegment);
+      const segment = segments[index + offset];
+      if (segment) selectTraceSegment(segment.id);
+    };
+    $('trace-previous').addEventListener('click', () => moveTraceSegment(-1));
+    $('trace-next').addEventListener('click', () => moveTraceSegment(1));
+    $('trace-plots').addEventListener('click', event => {
+      const point = event.target.closest('[data-segment]');
+      if (point) selectTraceSegment(point.dataset.segment);
+    });
+    $('trace-plots').addEventListener('keydown', event => {
+      const point = event.target.closest('[data-segment]');
+      if (!point) return;
+      if (event.key === 'Enter' || event.key === ' ') { event.preventDefault(); selectTraceSegment(point.dataset.segment); }
+      if (event.key === 'ArrowLeft' || event.key === 'ArrowRight') { event.preventDefault(); moveTraceSegment(event.key === 'ArrowLeft' ? -1 : 1); }
+    });
+    let traceResize;
+    window.addEventListener('resize', () => {
+      if (!tracePage || !snapshot?.trace) return;
+      clearTimeout(traceResize);
+      traceResize = setTimeout(renderTraceSegments, 150);
+    });
     window.addEventListener('popstate', () => {
       const campaign = new URLSearchParams(location.search).get('campaign') || '';
-      if (campaign === selectedCampaign) return;
+      const nextTraceRequest = Object.fromEntries(['candidate','task','run'].map(key => [key, new URLSearchParams(location.search).get(key) || '']));
+      if (campaign === selectedCampaign && (!tracePage || JSON.stringify(nextTraceRequest) === JSON.stringify(traceRequest))) return;
       selectedCampaign = campaign;
+      traceRequest = nextTraceRequest;
+      updateNavigation();
       selectedTask = '';
       taskCampaign = null;
       refresh();

@@ -26,7 +26,7 @@ from loopblox.runtime.components import (
 from loopblox.runtime import jev
 from loopblox.runtime.model import (
     BudgetExhausted, HostFault, OperationalProblem, PlanningTurn, Tool, ToolResult,
-    _PROVIDER_STOP_CODES, _TRANSIENT_CODES, usage_tokens,
+    _PROVIDER_STOP_CODES, _TRANSIENT_CODES, usage_tokens, charged_output_tokens,
 )
 from loopblox.runtime.io import atomic_json, run_process, cancellation_scope, check_cancelled, wait_seconds, cancel_dispatch
 from loopblox.report import write_trace_report
@@ -52,7 +52,7 @@ def model_usage(calls):
         model_output_tokens=sum(outputs) if all(x is not None for x in outputs) else None,
         known_model_input_tokens=sum(x or 0 for x in inputs),
         known_model_output_tokens=sum(x or 0 for x in outputs),
-        charged_output_tokens=sum(call["charged_output_tokens"] for call in calls),
+        charged_output_tokens=charged_output_tokens(calls),
         incomplete_usage_calls=sum(i is None or o is None for i, o in zip(inputs, outputs)),
         timeout_wait_seconds=sum(call.get("timeout_wait_seconds", 0) for call in calls),
     )
@@ -174,8 +174,7 @@ class ModelMeter:
         remaining = {
             "seconds": max(0, self.deadline - time.monotonic()),
             "model_calls": _available(self.limits["model_calls"], len(self.calls)),
-            "output_tokens": _available(self.limits["output_tokens"], sum(
-                call["charged_output_tokens"] for call in self.calls)),
+            "output_tokens": _available(self.limits["output_tokens"], charged_output_tokens(self.calls)),
         }
         if self.parent is not None:
             parent = self.parent.remaining()
@@ -183,7 +182,7 @@ class ModelMeter:
         return remaining
 
     @_meter_locked
-    def start(self, scope: str, requested: int, request: dict):
+    def start(self, scope: str, requested: int | None, request: dict):
         # The shared ledger owns session-wide provider failures, including user calls.
         # Refusing a later dispatch is not another model attempt and is not charged.
         for call in reversed(self.calls):
@@ -193,7 +192,7 @@ class ModelMeter:
         remaining = self.remaining()
         if remaining["seconds"] <= 0 or remaining["model_calls"] <= 0:
             raise BudgetExhausted("research_time_or_model_call_limit")
-        if requested <= 0 or requested > remaining["output_tokens"]:
+        if _available(requested) <= 0 or _available(requested) > remaining["output_tokens"]:
             raise BudgetExhausted("research_output_token_limit")
         call = (self.parent.start(scope, requested, request) if self.parent is not None else
                 dict(scope=scope, activity=_activity.get(), status="started", requested_output_tokens=requested,
@@ -222,17 +221,21 @@ class ModelMeter:
         return model_usage(self.calls)
 
 
+MAX_MODEL_RETRIES = 3
+
+
 def model_call(*, meter, scope, request, max_tokens, remaining, invoke, time_origin, record_attempt=None):
     """One gateway for agent and environment model attempts, retry and accounting."""
-    allowance = min(max_tokens, remaining()["output_tokens"])
+    allowance = min(_available(max_tokens), remaining()["output_tokens"])
     if not remaining()["model_calls"] or allowance <= 0:
         raise BudgetExhausted("model_limit")
+    allowance = None if allowance == math.inf else allowance
     failure = None
-    transient_retry_used = False
+    retries = 0
     while True:
         try:
             available = remaining()
-            if available["seconds"] <= 0 or not available["model_calls"] or allowance > available["output_tokens"]:
+            if available["seconds"] <= 0 or not available["model_calls"] or _available(allowance) > available["output_tokens"]:
                 raise BudgetExhausted("model_retry_budget")
             call = meter.start(scope, allowance, request)
         except BudgetExhausted:
@@ -281,10 +284,10 @@ def model_call(*, meter, scope, request, max_tokens, remaining, invoke, time_ori
             return turn, call
         if (isinstance(failure, OperationalProblem) and failure.effects == "none"
                 and failure.code in _TRANSIENT_CODES
-                and (failure.code in {"model_timeout", "concurrency_limit_exceeded"} or not transient_retry_used)):
+                and retries < MAX_MODEL_RETRIES):
             delay = 60 if failure.code == "concurrency_limit_exceeded" else 2
             available = remaining()
-            if (not available["model_calls"] or allowance > available["output_tokens"]
+            if (not available["model_calls"] or _available(allowance) > available["output_tokens"]
                     or available["seconds"] <= (0 if failure.code == "model_timeout" else delay)):
                 raise failure
             waiting = time.monotonic()
@@ -293,9 +296,12 @@ def model_call(*, meter, scope, request, max_tokens, remaining, invoke, time_ori
             finally:
                 if failure.code == "model_timeout":
                     meter.exclude_timeout(call, waiting, time.monotonic())
-            if failure.code not in {"model_timeout", "concurrency_limit_exceeded"}:
-                transient_retry_used = True
+            retries += 1
             continue
+        if isinstance(failure, OperationalProblem) and failure.code in _TRANSIENT_CODES and retries == MAX_MODEL_RETRIES:
+            with meter.lock:
+                call["retry_exhausted"] = True
+            meter.save()
         raise failure
 
 
@@ -341,8 +347,7 @@ class ControllerRuntime:
             actions=_available(self.limits.actions, self.actions_used),
             model_calls=max(0, min(_available(self.limits.model_calls, len(self.calls)),
                                    self.meter.remaining()["model_calls"])),
-            output_tokens=max(0, min(_available(self.limits.output_tokens, sum(
-                call["charged_output_tokens"] for call in self.calls)),
+            output_tokens=max(0, min(_available(self.limits.output_tokens, charged_output_tokens(self.calls)),
                 self.meter.remaining()["output_tokens"])),
         )
 
@@ -660,7 +665,15 @@ class ControllerRuntime:
             return PlanningTurn(raw=turn.raw, usage=turn.usage,
                                 output=dict(questions=body["questions"], answers=turn.output))
 
-        output = self.model_request(block, dict(provider="jev", **body), max_tokens=reservation, invoke=invoke)
+        try:
+            output = self.model_request(block, dict(provider="jev", **body), max_tokens=reservation, invoke=invoke)
+        except OperationalProblem as error:
+            if error.code != "jev_input_limit":
+                raise
+            # Evidence selection and questions belong to the candidate. No hidden
+            # truncation, alternative request, dispatch cancellation or invented label.
+            raise CandidateError("judge_input_limit: Jev rejected the selected evidence/questions as too large; "
+                                 "select a smaller context or revise the questions before calling Judge again") from error
         try:
             validate_judgments(output["answers"], args["questions"])
         except ValueError as error:
@@ -688,7 +701,8 @@ class ControllerRuntime:
                       raw=copy.deepcopy(turn.raw), output=output)
         self.history.append(record)
         self.save()  # Retain malformed model output and its incurred costs too.
-        if usage_tokens(usage, "completion_tokens") is not None and usage["completion_tokens"] > request_limit:
+        if (request_limit is not None and usage_tokens(usage, "completion_tokens") is not None
+                and usage["completion_tokens"] > request_limit):
             raise HostFault("Model exceeded its requested output allowance; actual usage was retained")
         return output
 
@@ -830,7 +844,9 @@ class ControllerRuntime:
                 with cancellation_scope(None):
                     run_process(["docker", "rm", "-f", name], timeout=10, capture_output=True)
             except Exception as error:
-                self.record.update(status="operational_failure", cleanup_error=str(error))
+                self.record["cleanup_error"] = str(error)
+                if self.record["status"] not in {"operational_failure", "host_fault", "interrupted"}:
+                    self.record.update(status="operational_failure", stop_reason="controller_cleanup_failed")
             finally:
                 if process.poll() is None:
                     process.kill()

@@ -105,9 +105,9 @@ _DECISION_RULES = (
 _MODEL_FAILURES = (
     "Invalid arguments or result references are candidate errors. Invalid model output is an operational "
     "failure, retained with its cost; there is no automatic format-repair call. The fixed gateway retries "
-    "model timeouts and concurrency-limit faults within the remaining budgets, waiting two and sixty "
-    "seconds respectively; only timeout attempts and their waits are excluded from charged time. "
-    "Other recognized transient request faults permit one retry after two seconds. Retries require "
+    "recognized no-effect transient faults at most three times within remaining budgets, waiting two and sixty "
+    "seconds for ordinary faults and concurrency limits respectively; only timeout attempts and their waits are excluded from charged time. "
+    "The fourth failed attempt preserves the original operational error for infrastructure diagnosis. Retries require "
     "no effects and use the identical request. Limits, "
     "interruption and host failures propagate; they do not produce a successful result."
 )
@@ -364,7 +364,11 @@ _DEFINITIONS = {
                     "sum approximately to one and choice is a maximum. Judgments are claims, not verified facts. "
                     "The caller owns thresholds, uncertainty handling, triggers and subsequent control flow.",
             failures=_MODEL_FAILURES + " Missing Jev credentials/SDK are host faults; insufficient output "
-                     "reservation prevents dispatch. Malformed responses retain their usage and raw evidence."),
+                     "reservation prevents dispatch. Malformed responses retain their usage and raw evidence. "
+                     "Provider input-size rejection raises a catchable RuntimeError prefixed judge_input_limit "
+                     "without a judgment or hidden retry. The caller may choose smaller evidence or questions. "
+                     "An uncaught error ends the candidate task and becomes researcher feedback after scoring "
+                     "and mandatory analysis; it does not cancel other task dispatch."),
         prompt="Assess only the supplied public task evidence under the original task and policy. "
                "Questions and criteria define judgments, not new facts or permissions. Model turns, including "
                "prior judgments, are claims; observations record visible outcomes. Missing evidence is not proof "

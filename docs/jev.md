@@ -30,12 +30,37 @@ Run a candidate Loop on a task and close its worker
 every evaluated candidate, including ordinary failures and
 budget-exhausted runs. It completes each run's analysis before starting the next
 task or returning the evaluation. Opening feedback is analyzed before the research
-agent starts. Infrastructure and verifier faults still stop research immediately.
+agent starts. Infrastructure and verifier faults close the current attempt;
+the AppWorld supervisor handles diagnosis and recovery in a new directory.
 Final holdout feedback never returns to a researcher.
 
 ## Fixed input and questions
 
-`loopblox/analysis/segments.py` owns `segment-semantics-v8` and the segment sizes.
+`loopblox/analysis/segments.py` owns `segment-semantics-v11` and the segment sizes.
+Version 9 includes the public task instruction when a task has no opening user
+message or `problem` field, covering AppWorld's instruction-based tasks. Historical
+measurements retain their frozen schemas; question definitions are unchanged.
+Version 10 adds an oversized-input fallback: a structured provider
+`max_tokens_exceeded` response is recorded as `jev_input_limit`. A rejected group
+is split into single observation cycles or single tail reasoning calls, preserving
+full evidence and task goal. Its raw record becomes `split` and retains the failed
+attempt; children link to `parent_segment`. Only leaves appear in measurement and
+participation summaries, while total Jev usage includes every attempt once.
+There is no truncation or invented parent score. A rejected single cycle remains
+an infrastructure fault for the repair worker. Group sizes differ after splitting;
+compare evidence transitions, not unweighted averages across grouping policies.
+Version 11 adopts JSON unwrapping and explicit references for exactly repeated
+evidence from retained infra repairs. Complete original segment states remain on
+disk; each attempt records its actual encoded input. Jev receives the references
+and their interpretation instruction, not an automatically expanded copy. This
+is a new measurement condition: reversible encoding does not prove label
+equivalence. `input_implementation_sha256` also freezes the analysis and segment
+source, so future input repairs remain distinguishable even with the same schema
+version. Input representation changes require a fresh experiment and baseline.
+Online Judge input-size rejection remains separate: it returns a catchable
+`judge_input_limit` candidate error without generating an answer or cancelling
+dispatch. Post-run analysis rejection still requires infra diagnosis.
+
 Each segment groups four observation-delimited cycles without overlapping executed
 steps. A cycle ends at the first completed observation of a distinct execution.
 Additional pages or a full reread remain supplementary evidence, not new cycles.
