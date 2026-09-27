@@ -17,17 +17,20 @@ from loopblox.benchmarks.appworld import AppWorldRunner, Environment
 from loopblox.research.session import ResearchSession, summarize_evaluation
 from loopblox.research.failures import incident
 from loopblox.runtime.components import catalog
-from loopblox.runtime.controller import Limits, ModelMeter, model_usage, MAX_MODEL_RETRIES
+from loopblox.runtime.controller import Limits, ModelMeter, model_usage, RETRY_POLICY
 from loopblox.runtime.io import atomic_json, atomic_text, digest, image_id
 from loopblox.runtime.model import ChatCompletionsClient, load_env
 
 
 PILOT_LIMITS = Limits(seconds=None, actions=None, model_calls=None, output_tokens=None)
+# Per-request output cap. Recorded successful agent calls peaked at 7,830 output tokens;
+# an uncapped reasoning loop once streamed 2.3M characters without finishing.
+TASK_MODEL_MAX_TOKENS = 32768
 
 
 def pilot_client(*, request_timeout=60):
     client = ChatCompletionsClient.from_env()
-    client.max_tokens = None
+    client.max_tokens = TASK_MODEL_MAX_TOKENS
     client.timeout = request_timeout
     client.stream = client.api == "chat_completions"
     return client
@@ -51,6 +54,10 @@ def prepare(args):
         raise ValueError("Request timeout must be positive and finite")
     if args.task_count < 1:
         raise ValueError("Task count must be positive")
+    if args.wall_hours is not None and not 0 < args.wall_hours < float("inf"):
+        raise ValueError("Wall hours must be positive and finite")
+    if args.wall_hours is not None and not args.continuous:
+        raise ValueError("Wall duration requires a supervised continuous run")
     if args.continuous and not args.code_image:
         raise ValueError("Continuous AppWorld research requires the official code shell")
     output = args.output.resolve()
@@ -132,7 +139,7 @@ def prepare(args):
             if not args.recovery_reason:
                 raise ValueError("Continuous recovery requires a recorded diagnosis or repair reason")
             if (prior_protocol["model"] != model_settings(client)
-                    or prior_protocol.get("gateway_max_retries") != MAX_MODEL_RETRIES
+                    or prior_protocol.get("gateway_retry") != RETRY_POLICY
                     or prior_protocol["task_limits"] != vars(PILOT_LIMITS)
                     or prior_protocol["worker_image"] != worker_image
                     or prior_protocol.get("code_image") != code_image):
@@ -157,10 +164,27 @@ def prepare(args):
     randomizer = random.Random(args.seed)
     families = sorted(groups)
     randomizer.shuffle(families)
-    selected = ([review["task_id"]] if review else
+    selection_manifest = None
+    if previous is not None or restart is not None:
+        selection_manifest = prior_protocol.get("selection_manifest")
+        selected = prior_protocol["task_ids"]
+        wall_seconds = prior_protocol.get("wall_seconds")
+    elif args.task_selection is not None:
+        selection_manifest = json.loads(args.task_selection.read_text())
+        if selection_manifest["official_train_sha256"] != digest(split_path.read_bytes()):
+            raise ValueError("Selection manifest must match the frozen official train split")
+        args.seed = selection_manifest["seed"]
+        selected = selection_manifest["task_ids"]
+        wall_seconds = args.wall_hours * 3600 if args.wall_hours is not None else None
+    else:
+        selected = ([review["task_id"]] if review else
                 [randomizer.choice(groups[family]) for family in families[:args.task_count]])
-    if (previous is not None or restart is not None) and selected != prior_protocol["task_ids"]:
-        raise ValueError("Recovery must retain the original task selection")
+        wall_seconds = args.wall_hours * 3600 if args.wall_hours is not None else None
+    if selection_manifest is not None:
+        held_out = selection_manifest["holdout_task_ids"]
+        if (len(set(selected + held_out)) != len(selected + held_out)
+                or any(task not in train for task in selected + held_out)):
+            raise ValueError("Development and reserved tasks must be unique, disjoint official train tasks")
     if len(selected) != (1 if review else args.task_count) or any(task not in train for task in selected):
         raise ValueError("Expected the authorized task count and official train membership")
     private = output / "private"
@@ -252,25 +276,31 @@ def prepare(args):
             raise ValueError("The code image must retain the pinned official execution methods")
         atomic_json(private / "code-environment-manifest.json", dict(image=code_image, **shell_manifest))
     protocol = dict(benchmark="AppWorld", version="0.1.3.post1", split="train", task_ids=selected,
-        selection=("Only the completed task supplied to the research review; baseline evidence is reused."
+        selection_manifest=selection_manifest, wall_seconds=wall_seconds,
+        selection=(selection_manifest["method"] if selection_manifest else
+                   "Only the completed task supplied to the research review; baseline evidence is reused."
                    if review else "Seeded shuffle of sorted official train scenario IDs; one randomly chosen variant per scenario."),
         seed=args.seed, worker_image=worker_image, task_limits=vars(PILOT_LIMITS),
         model=model_settings(client), user_model=None, evaluation_workers=1,
         code_image=code_image, continuous=args.continuous,
         failure_routing="researcher_after_batch_or_isolated_infra_repair; human_for_budget_access_or_authority",
-        gateway_max_retries=MAX_MODEL_RETRIES,
+        gateway_retry=RETRY_POLICY,
         restart_from=restart_record,
         prior_attempt=prior_attempt,
         prior_accounting=(prior_attempt or {}).get("accounting", {}),
         expected_researcher=(prior_attempt or restart_record or {}).get("expected_researcher"),
         review=review,
-        revision="User authorized no task/action/model/output budget caps and no client-request output cap "
-                 "to measure actual usage. "
+        revision="User authorized no task/action/model/output budget caps to measure actual usage. "
+                 f"Each task-model request is capped at {client.max_tokens} output tokens; a response reaching "
+                 "the cap raises a catchable model_output_limit candidate error and the task continues under the Loop. "
                  + (f"User authorized streaming Chat Completions with a {client.timeout:g}-second generation-inactivity deadline. "
                     "Only text, reasoning and tool-function deltas renew it; heartbeats do not. "
                     if client.stream else
                     f"Task-model requests have a {client.timeout:g}-second socket and whole-request deadline. ")
-                 + f"Recognized no-effect transient failures permit at most {MAX_MODEL_RETRIES} exact retries while budgets permit. "
+                 + ("Recognized no-effect transient failures retry the exact request with exponential backoff from "
+                    f"{RETRY_POLICY['initial_delay_seconds']:g} to {RETRY_POLICY['max_delay_seconds']:g} seconds "
+                    f"(at least {RETRY_POLICY['concurrency_delay_seconds']:g} for concurrency limits) within "
+                    f"{RETRY_POLICY['window_seconds']:g} seconds of the first failure, while budgets permit. ")
                  + "Provider constraints remain. "
                  "Prior attempts retain their costs; infinite remaining budgets need no subtraction. "
                  + (f"User explicitly selected provider {args.provider}; model settings are frozen above. "
@@ -282,7 +312,7 @@ def prepare(args):
                           if code_image else
                           "One public API call per action; dynamic API documentation discovery; no code tool."),
         purpose=("Continuous research on this fixed official train set, starting from a fresh reactive baseline. "
-                 "No imported candidates, notes or results; no iteration or shared budget cap; user owns stopping."
+                 "No imported candidates, notes or results; no iteration or shared charged budget cap. The frozen wall duration and user stop govern closure."
                  if args.continuous else
                  "One authorized evaluation of the reviewed candidate on its source training task; "
                  "fresh state, retained reference evidence, no other task dispatch." if review else
@@ -315,8 +345,12 @@ def run(output):
         raise ValueError("A frozen pilot may only be dispatched once")
     limits = Limits(**protocol["task_limits"])
     session = None
+    stop_reason = None
     def interrupt(_signal, _frame):
-        raise KeyboardInterrupt("user_stop")
+        nonlocal stop_reason
+        deadline = float(os.environ.get("LOOPBLOX_APPWORLD_DEADLINE", "inf"))
+        stop_reason = "wall_time_limit" if time.time() >= deadline else "user_stop"
+        raise KeyboardInterrupt(stop_reason)
     previous_term = signal.signal(signal.SIGTERM, interrupt)
     previous_int = signal.signal(signal.SIGINT, interrupt)
     with (output / "started.json").open("x") as lock:
@@ -421,6 +455,10 @@ def run(output):
     finally:
         signal.signal(signal.SIGTERM, previous_term)
         signal.signal(signal.SIGINT, previous_int)
+        if stop_reason == "wall_time_limit":
+            result.update(status="duration_reached", research_status=stop_reason)
+            if session is not None:
+                session.state.update(status="duration_reached", research_status=stop_reason)
         if session is not None:
             session.save()
         meter = getattr(session, "meter", None)
@@ -446,7 +484,9 @@ def main():
     parser.add_argument("--recovery-reason", help="Diagnosis or repair recorded for continuous recovery")
     mode.add_argument("--review", type=Path, help="Evaluate the exact reviewed proposal once on its source task")
     mode.add_argument("--continuous", action="store_true", help="Run the baseline and continuous research until stopped")
-    parser.add_argument("--task-count", type=int, default=10, help="Number of distinct official train scenarios")
+    parser.add_argument("--task-count", type=int, default=10, help="Number of official train development tasks")
+    parser.add_argument("--task-selection", type=Path, help="Frozen official-train development and reserved task manifest")
+    parser.add_argument("--wall-hours", type=float, help="Wall-clock duration of the whole supervised run, including repairs")
     parser.add_argument("--seed", type=int, default=20260922)
     parser.add_argument("--data-root", type=Path, default=ROOT / ".artifacts/upstream/appworld-data")
     parser.add_argument("--appworld-venv", type=Path, default=ROOT / ".artifacts/upstream/appworld-venv")

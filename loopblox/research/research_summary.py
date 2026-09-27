@@ -126,6 +126,10 @@ def research_summary(public, loops):
             segment.get("action_effectiveness_missing_reason", segment["status"])
             for analysis in analyses if analysis["schema_version"] == schema
             for segment in analysis["segments"] if segment["action_effectiveness"] is None))
+        group["progress_missing_reasons"] = dict(Counter(
+            segment.get("progress_missing_reason", segment["status"])
+            for analysis in analyses if analysis["schema_version"] == schema
+            for segment in analysis["segments"] if segment["progress"] is None))
 
     summaries = []
     for candidate in candidates:

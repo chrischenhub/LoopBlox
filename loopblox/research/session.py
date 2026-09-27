@@ -79,6 +79,17 @@ def summarize_evaluation(evaluation):
         candidates[candidate_id] = dict(
             **summarize(selected), usage=usage,
             distinct_tasks=len({row["task_id"] for row in attempted}))
+        groups = evaluation.get("task_groups", {})
+        if groups:
+            scenarios = {}
+            for row in selected:
+                scenarios.setdefault(groups[row["task_id"]]["scenario"], []).append(row)
+            candidates[candidate_id]["scenarios"] = dict(total=len(scenarios),
+                passed=sum(all(row.get("verification_verdict") == "pass" for row in group)
+                           for group in scenarios.values()))
+            candidates[candidate_id]["difficulty"] = {
+                str(level): summarize([row for row in selected if groups[row["task_id"]]["difficulty"] == level])
+                for level in sorted({groups[row["task_id"]]["difficulty"] for row in selected})}
     control = evaluation["candidate_ids"][0]
     indexed = {(row["candidate_id"], row["draw"], row["repeat"]): row for row in rows}
     comparisons = {}
@@ -166,6 +177,9 @@ class ResearchSession:
         self.workspace = ResearchWorkspace(self.public, self.private, self.image)
         self.task_limits = task_limits
         self.prior_accounting = setup.get("prior_accounting", {})
+        self.task_groups = {task: values for task, values in
+                           (setup.get("selection_manifest") or {}).get("task_metadata", {}).items()
+                           if task in development}
         self.budgets = dict(seconds=None, output_tokens=None, model_calls=None)
         self.state = dict(status="prepared", candidates=[], evaluations=[], proposals=[], selected=None,
                           task_runs_used=0, iterations=[], pending_candidates=[])
@@ -326,7 +340,7 @@ class ResearchSession:
                           sources={key: dict(path=f"sources/{key}.py", sha256=digest(value.encode()))
                                    for key, value in sources.items()},
                           sampled_tasks=list(self.development), repeats=1, requested_runs=len(rows),
-                          status="running", runs=rows)
+                          status="running", runs=rows, task_groups=self.task_groups)
         self.state["evaluations"].append(evaluation)
         self.save()
         feedback = self.run_evaluation(evaluation)
@@ -700,10 +714,14 @@ class ResearchSession:
                     "recovery need is a probability of yes in 0..1, not intensity. Score confidence describes "
                     "the response distribution, not the probability that a causal explanation is correct. "
                     "Interpret historical measurements using their recorded schema; earlier rubrics may differ. "
-                    "Every segment receives progress and recovery judgments, including unobserved tails. "
+                    "Every segment receives a recovery judgment, including unobserved tails. "
                     "Trailing calls are split into groups of at most four reasoning or decision invocations; "
                     "their segment indices and invocation IDs distinguish groups sharing an observation cursor. "
-                    "Missing action effectiveness means no new observed action outcome, not zero effectiveness. "
+                    "Missing progress or action effectiveness means no new observed action outcome, not zero. "
+                    "Progress counts only gains new to the segment, not results already in its start observation. "
+                    "A segment whose single observation still exceeds Jev's input limit has status input_limit "
+                    "and no measurements; its record gives the request size and executions. Evidence is never "
+                    "truncated, so its size reflects what the Loop chose to observe. "
                     "The Jev input retains failed component arguments and errors as public evidence. "
                     "These are noisy judgments, not rewards, verified causes or instructions to change a Loop. "
                     "Choose freely between inspecting evidence, revising a design, gathering "

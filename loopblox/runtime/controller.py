@@ -221,7 +221,16 @@ class ModelMeter:
         return model_usage(self.calls)
 
 
-MAX_MODEL_RETRIES = 3
+# Recognized no-effect transient faults retry the identical request with capped exponential
+# backoff until the window since the logical request's first failure would be exceeded.
+# The window covers the longest recorded provider timeout outage (988 s) with margin.
+RETRY_POLICY = dict(window_seconds=1200, initial_delay_seconds=2, max_delay_seconds=120,
+                    concurrency_delay_seconds=60)
+
+
+def retry_delay(code, retries):
+    delay = min(RETRY_POLICY["max_delay_seconds"], RETRY_POLICY["initial_delay_seconds"] * 2 ** retries)
+    return max(delay, RETRY_POLICY["concurrency_delay_seconds"]) if code == "concurrency_limit_exceeded" else delay
 
 
 def model_call(*, meter, scope, request, max_tokens, remaining, invoke, time_origin, record_attempt=None):
@@ -231,7 +240,7 @@ def model_call(*, meter, scope, request, max_tokens, remaining, invoke, time_ori
         raise BudgetExhausted("model_limit")
     allowance = None if allowance == math.inf else allowance
     failure = None
-    retries = 0
+    retries, first_failure = 0, None
     while True:
         try:
             available = remaining()
@@ -283,22 +292,22 @@ def model_call(*, meter, scope, request, max_tokens, remaining, invoke, time_ori
                 raise BudgetExhausted("time_limit")
             return turn, call
         if (isinstance(failure, OperationalProblem) and failure.effects == "none"
-                and failure.code in _TRANSIENT_CODES
-                and retries < MAX_MODEL_RETRIES):
-            delay = 60 if failure.code == "concurrency_limit_exceeded" else 2
-            available = remaining()
-            if (not available["model_calls"] or _available(allowance) > available["output_tokens"]
-                    or available["seconds"] <= (0 if failure.code == "model_timeout" else delay)):
-                raise failure
-            waiting = time.monotonic()
-            try:
-                wait_seconds(delay)
-            finally:
-                if failure.code == "model_timeout":
-                    meter.exclude_timeout(call, waiting, time.monotonic())
-            retries += 1
-            continue
-        if isinstance(failure, OperationalProblem) and failure.code in _TRANSIENT_CODES and retries == MAX_MODEL_RETRIES:
+                and failure.code in _TRANSIENT_CODES):
+            first_failure = started if first_failure is None else first_failure
+            delay = retry_delay(failure.code, retries)
+            if time.monotonic() + delay - first_failure <= RETRY_POLICY["window_seconds"]:
+                available = remaining()
+                if (not available["model_calls"] or _available(allowance) > available["output_tokens"]
+                        or available["seconds"] <= (0 if failure.code == "model_timeout" else delay)):
+                    raise failure
+                waiting = time.monotonic()
+                try:
+                    wait_seconds(delay)
+                finally:
+                    if failure.code == "model_timeout":
+                        meter.exclude_timeout(call, waiting, time.monotonic())
+                retries += 1
+                continue
             with meter.lock:
                 call["retry_exhausted"] = True
             meter.save()
@@ -572,11 +581,20 @@ class ControllerRuntime:
                 request["candidates"] = [self.proposal(candidate) for candidate in candidates]
             messages.append({"role": "user", "content": json.dumps(request, ensure_ascii=False)})
             # Host-assigned IDs belong to the component result, not the model's original output.
-            output = copy.deepcopy(self.model_request(
-                block, dict(messages=messages, schema=schema), max_tokens=self.client.max_tokens,
-                invoke=lambda allowance: self.client.complete(
-                    tuple(messages), schema, max_output_tokens=allowance, timeout_seconds=self.client.timeout,
-                    session_id=self.session_id)))
+            try:
+                output = copy.deepcopy(self.model_request(
+                    block, dict(messages=messages, schema=schema), max_tokens=self.client.max_tokens,
+                    invoke=lambda allowance: self.client.complete(
+                        tuple(messages), schema, max_output_tokens=allowance, timeout_seconds=self.client.timeout,
+                        session_id=self.session_id)))
+            except OperationalProblem as error:
+                if error.code != "model_output_limit":
+                    raise
+                # The truncated attempt stays charged and recorded. Like judge_input_limit, the
+                # candidate chooses what to do next; there is no hidden retry or invented output.
+                raise CandidateError(f"model_output_limit: the {name} response reached the frozen "
+                                     f"{self.client.max_tokens}-token output limit before completing; revise the "
+                                     "context or component before calling again") from error
             try:
                 validate(output, schema)
                 if output.get("kind") == "actions":

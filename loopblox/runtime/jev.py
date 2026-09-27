@@ -83,8 +83,10 @@ def main():
                     "model_timeout" if isinstance(error, TypeSafeAPITimeoutError) else
                     "model_transport_failure" if isinstance(error, TypeSafeAPIConnectionError) else
                     "rate_limit" if isinstance(error, TypeSafeRateLimitError) else
+                    # Includes Cloudflare origin errors (520-524) observed in front of the Jev API.
                     "service_unavailable" if isinstance(error, TypeSafeAPIError)
-                    and error.status in {408, 500, 502, 503, 504, 529} else "jev_request_failed")
+                    and error.status in {408, 500, 502, 503, 504, 520, 521, 522, 523, 524, 529}
+                    else "jev_request_failed")
             result = dict(error=type(error).__name__ + ": " + str(error), code=code)
             if isinstance(error, TypeSafeAPIError):
                 result["response"] = dict(status=error.status, body=error.body)

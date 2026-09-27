@@ -1,8 +1,8 @@
 # AppWorld integration and execution
 
-The active five-task continuous RSI protocol is owned by
+The active 36-task continuous RSI protocol is owned by
 [experiment.md](../experiment.md). It starts from a fresh reactive baseline,
-uses the official train split, and continues until the user stops. Earlier
+uses the official train split, and runs for 24 wall-clock hours unless stopped earlier. Earlier
 single-task and ten-task pilot artifacts are archived; their results and sources
 are not imported. Telecom research remains stopped.
 
@@ -26,10 +26,15 @@ Start the fresh continuous experiment:
 ```sh
 python -B -m loopblox.benchmarks.run_appworld \
   --output .artifacts/appworld/research-NEW \
-  --continuous --task-count 5 --seed 20260922 \
+  --continuous --task-count 36 --seed 20260927 \
+  --task-selection .artifacts/appworld/formal36-20260927-selection.json --wall-hours 24 \
   --provider freeinference --request-timeout 60 \
   --code-image loopblox-appworld-code:0.1.3-post1
 ```
+
+The manifest fixes two variants from each of 18 Medium/Hard scenarios; the remaining
+18 variants are reserved and are not dispatched. Recovery preserves the selection
+and the original wall-clock deadline, including repair and waiting time.
 
 The launcher snapshots the task data, dependencies, implementation and settings,
 then replaces itself with the frozen serial supervisor, preserving its host PID.
@@ -82,9 +87,13 @@ feedback. The native per-block guards are 100 seconds and 1,000 public API calls
 task interaction and output budgets are uncapped, while task-model requests
 use a separately frozen 60-second generation-inactivity deadline for streaming
 Chat Completions. Text, reasoning and tool-function deltas renew the watchdog;
-heartbeats do not. Total generation can exceed 60 seconds. Partial streams are
-recorded but never executed; recognized no-effect transient faults permit at most
-three exact retries (four attempts total), then route to infra diagnosis. Responses requests
+heartbeats do not. Total generation can exceed 60 seconds but not 32,768 output
+tokens per request, reasoning included; a response reaching that cap raises a
+catchable `model_output_limit` candidate error, so the task is still scored and the
+batch continues. Partial streams are
+recorded but never executed; recognized no-effect transient faults retry the exact
+request with exponential backoff (two to 120 seconds) for up to 20 minutes after the
+first failure, then route to infra diagnosis. Responses requests
 retain their whole-request deadline. Existing frozen attempts keep their original
 transport; streaming is an explicit new model setting.
 

@@ -102,15 +102,25 @@ _DECISION_RULES = (
     "Follow each capability's exact argument schema. Action IDs are assigned by the host; do not generate them."
 )
 
-_MODEL_FAILURES = (
+_OUTPUT_LIMIT = (
+    " A task-model response that reaches the frozen per-request output limit raises a catchable RuntimeError "
+    "prefixed model_output_limit, retaining its cost and truncated evidence; uncaught, it ends the candidate "
+    "task, which is still scored."
+)
+_GATEWAY_FAILURES = (
     "Invalid arguments or result references are candidate errors. Invalid model output is an operational "
-    "failure, retained with its cost; there is no automatic format-repair call. The fixed gateway retries "
-    "recognized no-effect transient faults at most three times within remaining budgets, waiting two and sixty "
-    "seconds for ordinary faults and concurrency limits respectively; only timeout attempts and their waits are excluded from charged time. "
-    "The fourth failed attempt preserves the original operational error for infrastructure diagnosis. Retries require "
+    "failure, retained with its cost; there is no automatic format-repair call.{output_limit} "
+    "The fixed gateway retries "
+    "recognized no-effect transient faults within remaining budgets, with exponential backoff from two to 120 "
+    "seconds (at least sixty for concurrency limits), while the next attempt starts within 20 minutes of the "
+    "first failure; only timeout attempts and their waits are excluded from charged time. "
+    "The last failed attempt preserves the original operational error for infrastructure diagnosis. Retries require "
     "no effects and use the identical request. Limits, "
     "interruption and host failures propagate; they do not produce a successful result."
 )
+# Task-model components share the output cap; Judge calls Jev, which has its own reservation rule.
+_MODEL_FAILURES = _GATEWAY_FAILURES.format(output_limit=_OUTPUT_LIMIT)
+_JEV_FAILURES = _GATEWAY_FAILURES.format(output_limit="")
 _EXECUTION_FAILURES = (
     "Invalid requests and unusable references are candidate errors. Ordinary tool failures return "
     "status=failed and their reported effects; unexpected tool exceptions return failed/unknown. "
@@ -363,7 +373,7 @@ _DEFINITIONS = {
                     "probabilities for every supplied label. Values are finite in [0,1]; Choice probabilities "
                     "sum approximately to one and choice is a maximum. Judgments are claims, not verified facts. "
                     "The caller owns thresholds, uncertainty handling, triggers and subsequent control flow.",
-            failures=_MODEL_FAILURES + " Missing Jev credentials/SDK are host faults; insufficient output "
+            failures=_JEV_FAILURES + " Missing Jev credentials/SDK are host faults; insufficient output "
                      "reservation prevents dispatch. Malformed responses retain their usage and raw evidence. "
                      "Provider input-size rejection raises a catchable RuntimeError prefixed judge_input_limit "
                      "without a judgment or hidden retry. The caller may choose smaller evidence or questions. "

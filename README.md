@@ -1,7 +1,7 @@
 ![LoopBlox](docs/assets/loopblox-banner.png)
 [Quick start](#quick-start) · [Visualize research](#visualize-your-experiment) · [Write a Loop](CONTROLLER.md) · [Components](COMPONENTS.md) · [Research protocol](experiment.md)
 
-LoopBlox lets a Codex researcher edit an agent's Python loop and test each version on the same benchmark. It saves source code, task traces, scores and research notes from every iteration. The current experiment uses five official **AppWorld** training tasks, an isolated native code shell and the original evaluator. Research continues until you stop it.
+LoopBlox lets a Codex researcher edit an agent's Python loop and test each version on the same benchmark. It saves source code, task traces, scores and research notes from every iteration. The current experiment uses 36 official **AppWorld** training tasks (two variants from each of 18 Medium/Hard scenarios), an isolated native code shell and the original evaluator. The formal run targets 24 hours of continuous research.
 
 The earlier telecom campaign and AppWorld pilot runs remain stopped and archived.
 [AppWorld setup](docs/appworld.md) describes the current execution environment;
@@ -28,9 +28,9 @@ The researcher can change component order, add branches, and repeat calls using 
 
 ![Research and Harness Loops: review results, edit and evaluate the Loop, save findings, and route errors to research feedback, infrastructure repair, or human input.](docs/assets/research-process.png)
 
-LoopBlox first runs the baseline on five AppWorld tasks. Codex reviews the scores and traces, edits the Loop, and requests an evaluation on the same tasks.
+LoopBlox first runs the baseline on 36 AppWorld tasks. Codex reviews the scores and traces, edits the Loop, and requests an evaluation on the same tasks.
 
-LoopBlox keeps the best Loop by success rate, then cost. Codex saves its findings and tries the next change. This continues until you stop it. The [research protocol](experiment.md) defines evaluation and recovery rules.
+LoopBlox keeps the best Loop by success rate, then cost. Codex saves its findings and tries the next change. This continues until the frozen wall-clock deadline or your earlier stop. The [research protocol](experiment.md) defines evaluation and recovery rules.
 
 ## Quick start
 
@@ -48,7 +48,7 @@ Research uses three services. Codex edits Loops through your ChatGPT subscriptio
 
 Follow the [installation guide](docs/running.md#install-the-host-dependencies) to install the benchmark environment, Jev SDK, and pinned Linux Codex distribution, then sign in to ChatGPT. Copy the two path assignments printed by setup into `.env` and set `FREEINFERENCE_API_KEY` and `TYPESAFE_API_KEY`. Paths must be absolute; `.env` does not expand `$HOME` or `$PWD`.
 
-The guide also covers [other model providers](docs/running.md#host-configuration) and [login locations](docs/running.md#chatgpt-login). Research consumes service quota and continues until you stop it. Each task has [its own budget](experiment.md#limits-and-accounting).
+The guide also covers [other model providers](docs/running.md#host-configuration) and [login locations](docs/running.md#chatgpt-login). Research consumes service quota and stops at the frozen wall-clock deadline or your earlier stop. Each task has [its own budget](experiment.md#limits-and-accounting).
 
 ### 2. Prepare tasks and start research
 
@@ -56,10 +56,11 @@ The guide also covers [other model providers](docs/running.md#host-configuration
 # Use the benchmark's Python environment
 source .artifacts/upstream/tau2-bench/.venv/bin/activate
 
-# Run a fresh baseline, then continuously research on five training tasks
+# Run a fresh baseline, then continuously research on 36 training tasks for 24 hours
 python -B -m loopblox.benchmarks.run_appworld \
   --output .artifacts/appworld/research-NEW \
-  --continuous --task-count 5 --seed 20260922 \
+  --continuous --task-count 36 --seed 20260927 \
+  --task-selection .artifacts/appworld/formal36-20260927-selection.json --wall-hours 24 \
   --provider freeinference --request-timeout 60 \
   --code-image loopblox-appworld-code:0.1.3-post1
 ```

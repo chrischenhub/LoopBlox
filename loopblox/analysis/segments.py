@@ -9,7 +9,7 @@ import collections
 import json
 import pathlib
 
-SCHEMA_VERSION = "segment-semantics-v11"
+SCHEMA_VERSION = "segment-semantics-v12"
 OBSERVATIONS_PER_SEGMENT = 4
 TAIL_REASONING_CALLS_PER_SEGMENT = 4
 _REASONING_COMPONENTS = ("decide", "think_decide", "think", "plan", "decompose", "critique", "reflect", "choose", "judge")
@@ -47,8 +47,9 @@ def questions():
                                        "completing a prerequisite from delivering a user-requested outcome. "
                                        "Retrieving information is preparation unless the user requested that "
                                        "information and the answer was delivered to them. Use `decided` and "
-                                       "any `reasoning` as context, not proof of effects. Judge every segment, "
-                                       "including one without new observed outcomes. Planning, rereading and "
+                                       "any `reasoning` as context, not proof of effects. `start_observation` "
+                                       "is context from before this segment: results already visible there are "
+                                       "not new progress in this segment. Planning, rereading and "
                                        "completion proposals alone do not establish new task progress; absence "
                                        "of an observation does not prove an attempted action failed.", criteria=PROGRESS),
         "action_effectiveness": Score(instructions="How well did the actions in `decided` achieve "
@@ -75,9 +76,13 @@ def questions():
 
 
 def segment_questions(definitions, state):
-    """Always judge progress and recovery; effectiveness needs an observed result."""
+    """Always judge recovery; progress and effectiveness need a new observed result.
+
+    Without one, a progress score can only re-credit results already visible in
+    `start_observation`, so it is recorded as missing rather than requested.
+    """
     return {key: value for key, value in definitions.items()
-            if key != "action_effectiveness" or state["outcome"]}
+            if key not in ("progress", "action_effectiveness") or state["outcome"]}
 
 
 def _unwrap(value, depth=6):
@@ -293,8 +298,11 @@ def measurements(segment):
     if segment["status"] != "completed":
         return dict(progress=None, action_effectiveness=None, recovery_needed=None, status=segment["status"])
     answers = segment["response"]["answers"]
+    progress = answers.get("progress")
     effectiveness = answers.get("action_effectiveness")
-    return dict(progress=answers["progress"]["score"], progress_confidence=answers["progress"]["confidence"],
+    return dict(progress=progress["score"] if progress else None,
+                progress_confidence=progress["confidence"] if progress else None,
+                **(dict(progress_missing_reason="no_observed_outcome") if progress is None else {}),
                 action_effectiveness=effectiveness["score"] if effectiveness else None,
                 action_effectiveness_confidence=effectiveness["confidence"] if effectiveness else None,
                 **(dict(action_effectiveness_missing_reason="unobserved_actions" if segment["state"]["decided"]
@@ -337,8 +345,10 @@ def report(labelled):
     print(f"\nScore correlation  progress vs action_effectiveness: "
           f"{_correlation([a['progress'] for a in paired], [a['action_effectiveness'] for a in paired]):+.2f} "
           f"({len(paired)} paired measurements)")
+    progressed = [answer for answer in answers if answer["progress"] is not None]
     print(f"recovery_needed vs progress: "
-          f"{_correlation([a['recovery_needed'] for a in answers], [a['progress'] for a in answers]):+.2f}")
+          f"{_correlation([a['recovery_needed'] for a in progressed], [a['progress'] for a in progressed]):+.2f} "
+          f"({len(progressed)} paired measurements)")
     rows = [row for _, _, row, _ in labelled]
     print(f"recovery_needed vs code-detected identical repeat: "
           f"{_correlation([a['recovery_needed'] for a in answers], [float(r['facts']['identical_repeat_of'] is not None) for r in rows]):+.2f}")
@@ -390,8 +400,9 @@ def write_evidence(out, per_run):
         "Supplementary observation pages are evidence, not additional executed steps. "
         "Verdicts and segment counts are host records. Measurements use public segment evidence; "
         "final task scores are not model inputs. Treat measurements as claims, not verified causes. "
-        "Every segment receives progress and recovery judgments, including tails without a new observed outcome. "
-        "Action effectiveness is missing when no new action outcome was observed; missing values are not zeros.\n\n"
+        "Every segment receives a recovery judgment, including tails without a new observed outcome. "
+        "Progress and action effectiveness are missing when no new action outcome was observed; "
+        "missing values are not zeros.\n\n"
         + "\n".join(table) + "\n")
     return out / "labels.md"
 

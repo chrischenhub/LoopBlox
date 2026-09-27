@@ -10,7 +10,7 @@ from loopblox.runtime.io import digest
 def _metrics(configuration, segments, source):
     """Use the run's frozen questions, or its recorded answer legends, for scales."""
     metrics = {}
-    for key, label in (("progress", "Task progress"),
+    for key, label in (("progress", "Observed task gain"),
                        ("action_effectiveness", "Action effectiveness"),
                        ("recovery_needed", "Recovery needed")):
         question = configuration.get("questions", {}).get(key, {})

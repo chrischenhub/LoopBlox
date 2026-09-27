@@ -23,7 +23,8 @@ def configuration():
                 tail_reasoning_calls_per_segment=TAIL_REASONING_CALLS_PER_SEGMENT,
                 input_implementation_sha256=digest(Path(__file__).read_bytes() + b"\0" +
                                                    Path(__file__).with_name("segments.py").read_bytes()),
-                oversized_segments="Split rejected groups into single observation cycles or tail reasoning calls; never truncate evidence",
+                oversized_segments="Split rejected groups into single observation cycles or tail reasoning calls; "
+                                   "record a rejected single cycle as input_limit, unmeasured; never truncate evidence",
                 **metadata, questions_sha256=digest(json.dumps(metadata["questions"], sort_keys=True).encode()))
 
 
@@ -112,8 +113,20 @@ def analyze_run(trace_path, *, configuration, meter, scope):
                 ids = set(segment["ids"])
                 pieces = [piece for piece in turns(trace, observations_per_segment=1,
                     tail_reasoning_calls_per_segment=1) if set(piece["ids"]).issubset(ids)]
-                if len(pieces) < 2 or set().union(*(set(piece["ids"]) for piece in pieces)) != ids:
-                    raise  # A single oversized observation needs repair, not silent truncation.
+                if set().union(*(set(piece["ids"]) for piece in pieces)) != ids:
+                    raise  # Inconsistent segmentation is an infrastructure fault.
+                if len(pieces) < 2:
+                    # The Loop's own observation exceeds Jev's input; evidence is never truncated.
+                    # Record the facts and leave this segment unmeasured instead of stopping research.
+                    segment.update(status="input_limit", input_limit=dict(
+                        code=error.code, request_characters=len(json.dumps(body, ensure_ascii=False)),
+                        executions=sorted({item["execution_id"] for item in segment["state"]["outcome"]}),
+                        largest_outcome_characters=max((len(json.dumps(item, ensure_ascii=False))
+                                                        for item in segment["state"]["outcome"]), default=0),
+                        start_observation_characters=len(json.dumps(segment["state"]["start_observation"],
+                                                                    ensure_ascii=False))))
+                    save()
+                    continue
                 next_index = max(item["index"] for item in segments) + 1
                 children = [dict(piece, index=next_index + index, parent_segment=segment["index"],
                                  status="not_started") for index, piece in enumerate(pieces)]
@@ -186,6 +199,7 @@ def feedback(record, artifact, trace):
             parent_segment=segment.get("parent_segment"),
             evidence_pointer=f"/segments/{position}", invocation_ids=segment["ids"],
             facts=segment["facts"], **measurements(segment),
+            **({"input_limit": segment["input_limit"]} if "input_limit" in segment else {}),
             execution=dict(components=execution["components"], tools=execution["tools"],
                            agent_usage=model_usage(scoped["model_calls"]))))
     return dict(

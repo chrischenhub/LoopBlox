@@ -36,7 +36,7 @@ Final holdout feedback never returns to a researcher.
 
 ## Fixed input and questions
 
-`loopblox/analysis/segments.py` owns `segment-semantics-v11` and the segment sizes.
+`loopblox/analysis/segments.py` owns `segment-semantics-v12` and the segment sizes.
 Version 9 includes the public task instruction when a task has no opening user
 message or `problem` field, covering AppWorld's instruction-based tasks. Historical
 measurements retain their frozen schemas; question definitions are unchanged.
@@ -46,8 +46,9 @@ is split into single observation cycles or single tail reasoning calls, preservi
 full evidence and task goal. Its raw record becomes `split` and retains the failed
 attempt; children link to `parent_segment`. Only leaves appear in measurement and
 participation summaries, while total Jev usage includes every attempt once.
-There is no truncation or invented parent score. A rejected single cycle remains
-an infrastructure fault for the repair worker. Group sizes differ after splitting;
+There is no truncation or invented parent score. In versions 10 and 11 a rejected
+single cycle remained an infrastructure fault for the repair worker; version 12
+records it as missing (below). Group sizes differ after splitting;
 compare evidence transitions, not unweighted averages across grouping policies.
 Version 11 adopts JSON unwrapping and explicit references for exactly repeated
 evidence from retained infra repairs. Complete original segment states remain on
@@ -59,7 +60,30 @@ source, so future input repairs remain distinguishable even with the same schema
 version. Input representation changes require a fresh experiment and baseline.
 Online Judge input-size rejection remains separate: it returns a catchable
 `judge_input_limit` candidate error without generating an answer or cancelling
-dispatch. Post-run analysis rejection still requires infra diagnosis.
+dispatch.
+
+Version 12 stops requesting progress for segments without a new observed outcome,
+chiefly completion tails. Their scores had depended on whether the preceding
+observation already showed the work: replacing it with the opening observation
+removed high tail scores, so they re-credited earlier evidence rather than
+measuring the tail. The progress instruction now states that results visible in
+`start_observation` are not new progress; this mainly lowers repeated lookups and
+closing messages after completed work. Recovery, action effectiveness, segmentation
+and evidence encoding are unchanged. Version 12 progress is stricter than version
+11 and must not be pooled with it; its per-run coverage also differs.
+
+Version 12 also stops treating an unsplittable input rejection as an
+infrastructure fault. When a single observation cycle or tail call still exceeds
+Jev's input limit, that segment gets status `input_limit` and no measurements.
+Its record keeps the rejected attempt, the request size, the executions observed,
+the largest outcome's size and the start observation's size. Because the next
+cycle starts from that observation, one oversized result can leave two adjacent
+segments unmeasured. Other segments and the run's feedback proceed.
+Observation size is set by the Loop: the Jev input is the evidence the agent itself
+read, such as a full `observe_full` result, and is never truncated. A Loop can read
+less, for example with `observe_brief` pages or a narrower context. An `input_limit`
+segment is a recorded fact about that evidence, not a task score or a failure.
+Inconsistent split coverage and other analysis errors remain infrastructure faults.
 
 Each segment groups four observation-delimited cycles without overlapping executed
 steps. A cycle ends at the first completed observation of a distinct execution.
@@ -76,8 +100,9 @@ once. This count bound prevents an indefinitely repeated completion-review loop
 from becoming one analysis request; it does not impose a token bound on an
 individual invocation. Evidence is never truncated. Tail groups may share an
 observation-step cursor; their segment indices and invocation IDs distinguish them.
-Every segment, including these tails, receives Jev progress and recovery judgments
-regardless of whether it has a new observed outcome.
+Every segment, including these tails, receives a Jev recovery judgment regardless
+of whether it has a new observed outcome. Progress, like action effectiveness, is
+requested only for segments with a new observed outcome.
 
 The input includes the initial public request, the latest public user message
 before the segment, its starting observation, every attempted action and every
@@ -99,10 +124,14 @@ observation remains the representation the agent saw. No final score, evaluator
 data or private simulator scenario is sent to Jev.
 
 The judgments cover the whole segment, not its last cycle or a per-cycle average.
-Progress and recovery are always requested. Action effectiveness is requested only
-when the segment has a new observed outcome; its absence is recorded as
-`unobserved_actions` or `no_attempted_actions`, not a zero or a skipped segment.
-Progress has four levels; action effectiveness has three:
+Recovery is always requested. Progress and action effectiveness are requested only
+when the segment has a new observed outcome. Missing progress is recorded as
+`no_observed_outcome`; missing effectiveness as `unobserved_actions` or
+`no_attempted_actions`. Neither is a zero or a skipped segment. A segment's
+`start_observation` is context from before it: progress credits only gains new to
+the segment, not results already visible there, such as a closing message after
+completed work or a repeated lookup. Progress has four levels; action effectiveness
+has three:
 
 | Level | Progress (0–3) | Action effectiveness (0–2) |
 | --- | --- | --- |
@@ -185,7 +214,10 @@ the same campaign.
 
 Both roles reuse `loopblox/runtime/jev.py`, using `jev-1.13.0` through the existing bounded process runner and shared model
 gateway. SDK retries are disabled; the gateway owns retry decisions and records
-every actual attempt. Post-run Jev calls and reported tokens consume the shared research
+every actual attempt. Request timeouts, connection failures, 429 and HTTP 408,
+500, 502–504, 520–524 (Cloudflare origin errors) and 529 are transient and use the
+gateway's backoff schedule; other 4xx responses, including `jev_input_limit`, are
+not retried. Post-run Jev calls and reported tokens consume the shared research
 budget after the task has closed. They do not consume that task's finished limits.
 The run's original task status, verification and task usage remain intact.
 

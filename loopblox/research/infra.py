@@ -215,12 +215,19 @@ def supervise(output):
     control = output.with_name(output.name + "-supervision")
     control.mkdir()
     state = dict(status="running", attempt=str(output), supervisor_pid=os.getpid(), started_at=time.time(), attempts=[], repairs=[])
+    wall_seconds = json.loads((output / "protocol.json").read_text()).get("wall_seconds")
+    deadline = state["started_at"] + wall_seconds if wall_seconds is not None else None
+    state["deadline_at"] = deadline
     source_attempt = output
     restart_required = False
     process = None
     def interrupt(_signum, _frame):
         raise KeyboardInterrupt("user_stop")
     previous = signal.signal(signal.SIGTERM, interrupt)
+    previous_alarm = signal.signal(signal.SIGALRM, interrupt)
+    if deadline is not None:
+        os.environ["LOOPBLOX_APPWORLD_DEADLINE"] = str(deadline)
+        signal.setitimer(signal.ITIMER_REAL, max(0.001, deadline - time.time()))
     try:
         command = [sys.executable, "-B", "-m", "loopblox.benchmarks.run_appworld", "--output", str(output), "--frozen"]
         implementation = output / "private/implementation"
@@ -239,7 +246,7 @@ def supervise(output):
             result = json.loads(result_path.read_text()) if result_path.exists() else dict(status="preparation_failed")
             state["attempts"].append(dict(directory=str(output), status=result["status"], exit_code=exit_code,
                 closed_at=result.get("closed_at"), usage=result.get("usage"), charged_seconds=result.get("charged_seconds")))
-            if result["status"] in {"stopped", "completed"}:
+            if result["status"] in {"stopped", "completed", "duration_reached"}:
                 state["status"] = result["status"]
                 break
             failure = result.get("incident")
@@ -309,6 +316,7 @@ def supervise(output):
                 "--worker-image", protocol["worker_image"], "--code-image", protocol["code_image"],
                 "--request-timeout", str(protocol["model"]["timeout"]), "--attempt"]
     except KeyboardInterrupt:
+        signal.setitimer(signal.ITIMER_REAL, 0)
         if process is not None:
             previous_int = signal.signal(signal.SIGINT, signal.SIG_IGN)
             try:
@@ -319,11 +327,13 @@ def supervise(output):
                 process.wait()
             finally:
                 signal.signal(signal.SIGINT, previous_int)
-        state["status"] = "stopped"
+        state["status"] = "duration_reached" if deadline is not None and time.time() >= deadline else "stopped"
     except Exception as error:
         state.update(status="failed", incident=incident(error, stage="supervisor"))
         raise
     finally:
+        signal.setitimer(signal.ITIMER_REAL, 0)
+        signal.signal(signal.SIGALRM, previous_alarm)
         signal.signal(signal.SIGTERM, previous)
         atomic_json(control / "state.json", state)
     return state

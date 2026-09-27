@@ -1,6 +1,6 @@
 # Running continuous Loop research
 
-For the active five-task AppWorld continuous experiment, see [AppWorld setup](appworld.md).
+For the active 36-task AppWorld continuous experiment, see [AppWorld setup](appworld.md).
 The telecom commands below describe the retained, currently stopped integration.
 
 Updated September 21, 2026. This guide covers environment setup, task preparation,
@@ -369,11 +369,15 @@ calls.
 The **Trace** tab at `/trace` joins one candidate's recorded task run to its Jev
 segments. Choose a candidate, task and run, or use **Inspect trace** in the
 Dashboard's task table. Without an explicit selection, it follows the latest
-available analysis. Three linked plots show segment progress, immediate action
-effectiveness and the probability that the approach needs correction. Progress
-is per segment, not cumulative completion; correction need is not recovery
+available analysis. Two linked plots show new progress in each segment and the
+probability that the approach needs correction. Progress is incremental,
+not cumulative completion; correction need is not recovery
 success. Axes use that run's recorded question scales, so historical schemas
 retain their own ranges. Missing measurements leave gaps and remain selectable.
+A tail segment without new observed outcomes may show little new progress even
+after task success; low scores still need to be read alongside the evidence.
+Segments recorded with zero actions and zero observations are labeled as such,
+without changing their numeric measurements.
 
 Segment order follows recorded leaf order, excluding split parent records;
 numeric record IDs may be nonsequential after splitting. Click a plotted point,
@@ -384,7 +388,9 @@ invocations in expandable disclosures. Encoded request inputs remain separate
 from original segment evidence. A pinned whole-task result shows Success, Failure
 or Not scored while browsing the plots and segment evidence. Success and Failure
 come only from the official evaluator; unfinished or interrupted runs without a
-score remain Not scored. Jev segment completion is labeled separately.
+score remain Not scored. Jev segment completion is labeled separately. Raw
+historical responses and scales retain all originally recorded measurements,
+including action effectiveness.
 Selection and open disclosures survive live refreshes; pending
 analysis shows a waiting state rather than invented measurements.
 

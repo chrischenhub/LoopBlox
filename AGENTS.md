@@ -1,6 +1,6 @@
 # LoopBlox: composable component research
 
-Engineering and experiment policy, updated 2026-09-23.
+Engineering and experiment policy, updated 2026-09-27.
 
 - [README.md](README.md) owns the project goal and current status.
 - [experiment.md](experiment.md) owns the current continuous research protocol on one frozen benchmark and its implementation status.
@@ -15,7 +15,7 @@ Engineering and experiment policy, updated 2026-09-23.
 Build an open-source experiment environment for componentizing harness behavior,
 comparing compositions on verifiable tasks, and automatically searching for better
 Loops. Visualization explains components, candidate changes and observed execution.
-TextWorld is retired. The active continuous experiment uses five official AppWorld train tasks with
+TextWorld is retired. The active continuous experiment uses 36 official AppWorld train tasks (two variants per Medium/Hard scenario) with
 the native code shell. τ²-bench telecom is stopped; retail runs are historical. Preserve the official telecom evaluator, including action checks where
 required. Do not substitute
 environment-only scoring for tasks with additional official criteria. Current work
@@ -124,18 +124,21 @@ serially, stop on the first failure, and retain the attempted prefix when interr
 No implicit tool replay or rollback. Ordinary tool failures allow caller recovery;
 effects remain `none`, `applied` or `unknown` as actually reported.
 
-The fixed model gateway permits at most three exact retries per logical request
-(four attempts total), while charged-time, model-call and output budgets admit
-another attempt. `loopblox/runtime/controller.py::MAX_MODEL_RETRIES` owns the cap.
-Retry exhaustion preserves the original operational failure for infra diagnosis.
-Recognized no-effect timeout attempts and their two-second retry waits do not
+The fixed model gateway retries each logical request with exponential backoff:
+waits start at two seconds, double, and are capped at 120 seconds. A retry is
+dispatched only while it would start within 20 minutes of the request's first
+failure and charged-time, model-call and output budgets admit another attempt.
+`loopblox/runtime/controller.py::RETRY_POLICY` owns these values; the 20-minute
+window covers the longest recorded provider timeout outage (988 seconds).
+Retry exhaustion marks the last attempt `retry_exhausted` and preserves the
+original operational failure for infra diagnosis.
+Recognized no-effect timeout attempts and their retry waits do not
 consume task or ancestor research time. Record their actual wait duration on the
 attempt; deadlines and usage summaries derive the exclusion from those records.
 Structured HTTP 429 errors with provider code `concurrency_limit_exceeded` are
-recognized separately and retry after 60 seconds on each occurrence while budgets
-admit another exact attempt. Their elapsed request and retry-wait time remains
-charged. Other recognized transient faults use the same three-retry cap, waiting two
-seconds; their elapsed time remains charged. Only faults with no effects qualify.
+recognized separately and wait at least 60 seconds before each retry. Their elapsed
+request and retry-wait time remains charged. Other recognized transient faults use
+the same schedule; their elapsed time remains charged. Only faults with no effects qualify.
 Messages, schema and requested output allowance stay identical;
 every attempt is charged. Unknown usage stays unknown and reserves the requested
 allowance. An explicitly uncapped request has no finite reservation: missing charged
@@ -155,7 +158,7 @@ in loopblox/benchmarks/tau2.py. The historical telecom continuous campaign uses
 `loopblox/research/campaign.py::TASK_LIMITS`: 900 charged seconds, 60 actions,
 256 combined agent/user model attempts and 65,536 output tokens per task. Shared
 research limits are explicitly null. Historical snapshots own that telecom protocol. The active AppWorld condition has
-uncapped task and shared budgets, as specified in experiment.md. Record every attempt and actual usage. This does not
+uncapped task and shared charged budgets, with a separate 24-hour wall deadline for the formal run, as specified in experiment.md. Record every attempt and actual usage. This does not
 remove per-request transport deadlines/output settings, isolation, fault handling,
 the frozen task/batch design or the pause before final comparison. Keep wall duration separate from charged duration
 in results and use charged duration when subtracting recovery spend. Historical
@@ -204,7 +207,7 @@ The historical retail campaign uses official train[:30] in three ordered,
 non-overlapping batches of ten, and all official test tasks after research closes.
 Its exact task selection includes related families, NL grading, handoffs and
 empty-environment-score cases; retain the audits and disclose these scope changes.
-The current protocol uses five audited official AppWorld training tasks and keeps
+The current protocol uses 36 audited official AppWorld training tasks and keeps
 official test outside research. Historical telecom campaigns retain their ten-task selection. Any final evaluation needs separate review and
 authorization. Freeze selection, exclusions and known exposure before execution.
 The domain pivot requires a new campaign; it is not recovery of the retail study.
@@ -410,7 +413,7 @@ host-private ledgers, outside researcher-readable evaluation directories. Unknow
 prices remain unknown. Authoritative scoring starts only after the worker closes.
 
 SpreadsheetBench 2 and Terminal-Bench are not integrated yet. AppWorld integration
-is documented in `docs/appworld.md`; `experiment.md` owns its active five-task
+is documented in `docs/appworld.md`; `experiment.md` owns its active 36-task
 continuous RSI protocol. The user authorized a fresh baseline, native code shell,
 no imported evidence and no fixed stopping round. Prior pilot artifacts are archived.
 This does not resume telecom research. The obsolete

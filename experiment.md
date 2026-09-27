@@ -1,7 +1,7 @@
 # Continuous RSI experiment
 
-Current research protocol, September 25, 2026. Improve reusable Python Loops on
-five frozen official AppWorld training tasks. The user authorized a fresh start,
+Current research protocol, September 27, 2026. Improve reusable Python Loops on
+36 frozen official AppWorld training tasks. The user authorized a fresh start,
 native code execution and continuous research with no fixed stopping round. The
 September 24 revision switches task agents to FreeInference with a 60-second
 request deadline and starts a fresh baseline; OpenCode records remain unchanged
@@ -21,12 +21,12 @@ to the researcher. Import no historical candidates, results or research notes.
 Expose the frozen component contracts and API documentation, not alternative
 complete Loop examples or a required branching policy.
 
-1. Freeze the five training tasks, baseline source, component catalog, task model,
+1. Freeze the 36 training tasks, baseline source, component catalog, task model,
    native researcher, execution environments and limits. Run the baseline once on
-   all five tasks, with official scoring and mandatory Jev analysis.
+   all 36 tasks, with official scoring and mandatory Jev analysis.
 2. Inspect public evidence and propose a testable change to the Loop. Save one new
    candidate by default, at most two per iteration.
-3. Evaluate every new source once on all five tasks, in the same admission order,
+3. Evaluate every new source once on all 36 tasks, in the same admission order,
    with fresh task state and workers. Duplicate sources reuse their existing IDs
    and evidence; they cannot be evaluated again.
 4. The host selects the best fully scored and analyzed candidate. Record the
@@ -44,24 +44,26 @@ source or task-agent context. A new candidate is a reusable Loop, not a task scr
 
 ## Task set and scoring
 
-Pin AppWorld `0.1.3.post1` and its official train split. Shuffle sorted scenario
-families with seed `20260922`, then choose one variant per family. Freeze the first
-five distinct scenarios in this order:
+Pin AppWorld `0.1.3.post1` and its official train split. Use all 18 Medium/Hard
+scenarios: two variants per scenario, totaling 24 Medium and 12 Hard tasks. Reserve
+the third variant of each scenario (18 tasks) outside research; no reserved or
+official test task is dispatched by this run. This reserve measures generalization
+to variants of known scenarios, not unseen scenarios.
 
-- `afc0fce_2`
-- `771d8fc_1`
-- `302c169_2`
-- `692c77d_2`
-- `29caf6f_2`
+The selection manifest records the exact ordered IDs, official train hash,
+scenario/difficulty metadata, seed `20260927` and known prior exposure. Shuffle
+scenarios and variants with that seed, prioritizing previously attempted variants
+into development before taking two per scenario. The reserved variants have no
+recorded prior runs. This is not a claim of unseen development tasks. The fresh
+researcher imports no historical traces, candidates, results or notes.
 
-`protocol.json` owns the frozen selection, hashes and request settings. Preserve
-exact task data, API documentation, base databases, dependencies and source code.
-Before task-model dispatch, require every selected task to fail the full official
-evaluator on an empty trajectory. Audit details and reference answers remain
-private. The operator previously inspected first-task trials and a partial
-second-task run on the seeded pilot selection. No uncontaminated selection or
-holdout generalization claim is made. The fresh researcher receives none of those
-traces, candidate sources, results or notes.
+`protocol.json` owns the frozen selection manifest, hashes and request settings.
+Preserve exact task data, API documentation, base databases, dependencies and source
+code. Before task-model dispatch, require every selected task to fail the full
+official evaluator on an empty trajectory. Audit details and reference answers
+remain private. Report task passes by difficulty and the number of scenarios whose
+two selected variants both pass, alongside total task passes. These supplementary
+counts do not change candidate ranking and are not official three-variant SGC.
 
 Each task uses its official instruction, supervisor, datetime, app descriptions
 and public API helper documentation. There is no simulated user model. The tool
@@ -85,12 +87,14 @@ reasoning effort and the canonical component schema. Raw responses and
 actual attempts are retained. Assistant history retains original parsed model
 output; host metadata is separately labeled evidence. The researcher uses the
 pinned native Codex distribution, with its separately frozen model and settings.
-Jev retains its own fixed questions and transport. Analysis schema v11 keeps the
+Jev retains its own fixed questions and transport. Analysis schema v12 requests
+progress only for segments with a new observed outcome (see docs/jev.md). It keeps the
 public AppWorld instruction in `task_goal` and splits provider-rejected oversized
 groups into single observation cycles or tail reasoning calls. It preserves every
 invocation and full evidence, retaining the rejected parent request and its usage.
-Only leaf segments count toward measurement coverage. A rejected single cycle is
-an infrastructure fault. Historical measurements are not rewritten. Version 11
+Only leaf segments count toward measurement coverage. From v12 a rejected single
+cycle is recorded as `input_limit`, unmeasured, and analysis continues; in v10 and
+v11 it was an infrastructure fault. Historical measurements are not rewritten. Version 11
 adopts the two retained repairs: parse complete JSON embedded in observation text, and replace exact
 repeated evidence with explicit JSON Pointer references. Original states and exact
 wire requests are retained. Reconstructability does not establish equivalent Jev
@@ -111,8 +115,9 @@ and authentication failures require the missing resource. Unknown errors go to
 infrastructure diagnosis, never silently to task failure. Online Judge input-size
 rejection is a catchable `judge_input_limit` candidate error: no label is invented
 and no dispatch cancellation occurs. Uncaught errors go through official scoring
-and mandatory analysis before researcher feedback. Post-run Jev rejection remains
-an infra fault. Internal cancellation is distinct from a user interrupt; cleanup
+and mandatory analysis before researcher feedback. Post-run Jev input-size
+rejection of an unsplittable segment is recorded as `input_limit`; other post-run
+Jev failures remain infra faults. Internal cancellation is distinct from a user interrupt; cleanup
 cannot replace the original error or prevent its ledger from being persisted.
 
 Infrastructure, researcher, verifier or analysis faults close the episode before
@@ -139,8 +144,20 @@ repair authority as a human blocker instead of indefinitely relaunching it.
 ## Limits and accounting
 
 Task seconds, actions, model attempts and output tokens are uncapped (`null`).
-Shared research time, task runs, model calls and output tokens are also uncapped.
-Task-model requests have no client output cap. New FreeInference Chat Completions
+Shared charged research time, task runs, model calls and output tokens are uncapped.
+The formal run has a separate 24-hour wall-clock duration, starting when the frozen
+supervisor opens. Audit, research, task execution, retries, cooldowns and repair all
+count toward this deadline. Recovery inherits the same absolute deadline; it never
+resets the clock. At the deadline, stop the active operation and preserve its
+partial records and usage during cleanup. Cleanup may finish after the deadline.
+Each task-model request is capped at 32,768 output tokens, reasoning included
+(`run_appworld.py::TASK_MODEL_MAX_TOKENS`). Recorded successful agent calls peaked
+at 7,830; the cap exists because an uncapped reasoning loop once streamed 2.3M
+characters for 28 minutes without finishing, renewing the inactivity watchdog
+throughout. A response reaching the cap raises a catchable `model_output_limit`
+candidate error: the attempt stays charged and recorded, the Loop may handle it,
+and if uncaught the task ends as a candidate error and is still officially scored
+and analyzed; the batch continues. New FreeInference Chat Completions
 requests use streaming with a 60-second generation-inactivity deadline, starting
 at transport launch. Nonempty text, reasoning and tool-function deltas renew it;
 heartbeats, roles, IDs and usage-only events do not. This host process watchdog
@@ -152,10 +169,10 @@ provider usage is requested and missing usage stays unknown. Streaming is frozen
 as a model setting; existing campaigns retain their original transport. The
 Responses adapter retains its whole-request deadline. A streaming-policy revision
 starts a new condition; ordinary recovery requires identical frozen transport
-settings and retry policy. A recognized no-effect timeout waits
-two seconds and retries the exact request at most three times (four attempts
-total), while budgets permit. The same retry cap applies to other recognized
-no-effect transient faults; concurrency-limit retries wait sixty seconds. Failed
+settings and retry policy. A recognized no-effect timeout or other transient
+fault retries the exact request with exponential backoff (two seconds doubling to
+at most 120; concurrency-limit retries wait at least sixty), while each retry
+starts within 20 minutes of the first failure and budgets permit. Failed
 attempts and unknown usage remain recorded. Timeout request and retry-wait durations are
 excluded from charged time under the existing gateway contract. Exhaustion routes
 the original operational fault to infra diagnosis. Provider capacities and quotas
@@ -201,7 +218,7 @@ decreasing counters remain unknown. Infrastructure recovery uses a fresh session
 
 ## Stopping and recovery
 
-Continue until the user stops the campaign. SIGINT or SIGTERM interrupts the
+Continue until the 24-hour wall deadline or an earlier user stop. SIGINT or SIGTERM interrupts the
 active operation and waits for worker and usage cleanup. Preserve partial attempts
 and the last fully evaluated incumbent. No final or test-split evaluation follows.
 
