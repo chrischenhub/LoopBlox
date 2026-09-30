@@ -334,12 +334,21 @@ prepared campaign does not displace a live one. When no live host or supervisor 
 detected, the page says so and shows the latest recorded campaign. Process presence
 confirms liveness, not progress.
 Choose a specific attempt in the selector to keep it fixed. Archived directories
-are outside default discovery. **Explore Loops** jumps to the integrated **Loop evolution**
+are outside default discovery. When related attempts exist, **Run history** appears
+below the campaign overview on Dashboard, Research and Trace. It keeps the original
+run and its repair/restart attempts visible, with separate **Current attempt** and
+**Viewing** indicators. Open an attempt to inspect its own saved Loops, task outcomes
+and traces, or choose **Follow live** to return to the newest live experiment. A
+**Fresh condition** starts a new baseline; history does not merge conditions or sum
+their counts. **Explore Loops** jumps to the integrated **Loop evolution**
 section on the same page. It uses the generic visualizer's candidate comparisons,
-source validation and recorded execution diagrams. Choose a task to compare the
-same task across every Loop, then expand Python source, source changes, exact path
-order or task outcomes. The task selection stays fixed while that campaign updates;
-switching campaigns resets it to the first recorded task. Open disclosures and
+source validation and recorded execution diagrams. Each diagram merges every
+recorded task of that Loop by default; choose one task to compare only that task
+across every Loop, then expand Python source, source changes, exact path
+order or task outcomes. Python source highlights added or modified lines in green
+against the recorded round-start incumbent, identified above the code. Removed
+lines remain available in Source changes. The task selection stays fixed while that campaign updates;
+switching campaigns resets it to all tasks. Open disclosures and
 diagram scroll positions survive refreshes. Standalone HTML export remains
 available with the visualization command below.
 
@@ -444,18 +453,20 @@ Missing scores, unknown usage, incomplete evaluations and missing traces remain
 explicit; the report never substitutes its own selection for the host's incumbent.
 Only fully released evaluation feedback qualifies for the evaluated label.
 
-Each diagram uses the same task across candidates: the first recorded task by
-default, or an explicit task selected with `--task telecom-development-0004`.
+Each diagram merges every recorded task trace of that candidate by default, or
+shows only an explicit task selected with `--task telecom-development-0004`.
 Diagrams derive from actual root component invocations, grouped at observations
-using that trace's frozen component contracts. They retain repeated component names within paths,
-display observed transition counts and highlight component names absent from the
-comparison trace. Expand **Exact path order** to inspect the recorded sequence.
+using each trace's frozen component contracts. Equal groups share one pattern across
+tasks; transitions are counted within each task and never across task boundaries.
+They retain repeated component names within paths, display observed transition
+counts and highlight component names absent from the comparison candidate's paths.
+Expand **Exact path order** to inspect each task's recorded sequence.
 Grouping equal component/status sequences does not imply equal arguments, equal
 results or stalled progress. The diagram does not parse arbitrary Python into a
 control-flow graph, invent unexecuted branches, or infer source-code conditions.
 
 Scores and costs cover the whole recorded candidate evaluation; diagrams and
-invocation counts cover only the displayed task. Agent costs exclude simulated
+invocation counts cover the displayed tasks. Agent costs exclude simulated
 users, post-run Jev and researcher usage. Prior interrupted recovery attempts are
 not added to candidate totals. Research notes and the saved rationale remain
 researcher claims, separate from host-derived observations. The embedded snapshot

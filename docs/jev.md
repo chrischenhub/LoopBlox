@@ -214,10 +214,10 @@ the same campaign.
 
 Both roles reuse `loopblox/runtime/jev.py`, using `jev-1.13.0` through the existing bounded process runner and shared model
 gateway. SDK retries are disabled; the gateway owns retry decisions and records
-every actual attempt. Request timeouts, connection failures, 429 and HTTP 408,
-500, 502–504, 520–524 (Cloudflare origin errors) and 529 are transient and use the
-gateway's backoff schedule; other 4xx responses, including `jev_input_limit`, are
-not retried. Post-run Jev calls and reported tokens consume the shared research
+every actual attempt. Request timeouts, connection and TLS failures, 429, HTTP 408
+and every 5xx except 501 and 505 (including Cloudflare origin errors 520–530) are
+transient and use the gateway's backoff schedule; other 4xx responses, including
+`jev_input_limit`, are not retried. Post-run Jev calls and reported tokens consume the shared research
 budget after the task has closed. They do not consume that task's finished limits.
 The run's original task status, verification and task usage remain intact.
 

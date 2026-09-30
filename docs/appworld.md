@@ -53,16 +53,16 @@ Ctrl-C, or SIGTERM to `supervisor_pid` in the sibling
 `<output>-supervision/state.json`, stops the active operation and waits for cleanup.
 The same state file identifies the current attempt and child PID. A user stop of
 the child is also terminal for the supervisor. There is no fixed stopping round or final test dispatch. A failed
-attempt cannot be resumed in place. Cleanup-only recovery preserves completed
-batches and prior spend. A repair affecting inputs, outputs or protocol creates a
-fresh condition using `--restart-from`, the same tasks and a newly evaluated
-baseline, without importing candidates or research evidence. The supervisor
-classifies the repair, retains its history, and rejects recurring unchanged fixes. The older `--previous`
-option also recovers failed continuous runs when supplied with
-`--recovery-reason`, the same provider/request settings and immutable image IDs.
-It retains task selection, data, dependencies, model settings and cumulative spend;
-the existing session restore copies complete batches and checkpoints unchanged,
-while restarting unfinished batches with fresh workers and a fresh researcher.
+attempt cannot be resumed in place. Checked infrastructure repairs recover with
+`--previous` and a recorded `--recovery-reason`, retaining completed baseline and
+candidate batches, the incumbent, notes, checkpoints and prior spend. Unfinished
+batches restart with fresh workers and a fresh researcher. The supervisor keeps
+the original wall deadline and rejects recurring unchanged fixes. Repairs are
+frozen separately, and retained results keep their original implementation
+provenance; comparisons must disclose behavioral and measurement changes.
+Recovery retains task selection, data, dependencies, model settings and immutable
+image IDs. `--restart-from` is an explicit fresh-start option, not the automatic
+repair policy. An unfinished opening baseline must still be completed.
 Missing prior total charged duration remains unknown. Historical bounded pilots
 can use `--previous` only when they have no scored tasks.
 

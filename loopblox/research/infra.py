@@ -33,9 +33,6 @@ EDITABLE = {
     "loopblox/analysis/segments.py": ("turns", "_unwrap", "_user_messages"),
     "loopblox/benchmarks/appworld_code.py": ("CodeEnvironment.receive", "CodeEnvironment.execute", "CodeEnvironment.close"),
 }
-# Every other allowed edit may change model-visible evidence or execution policy.
-# Uncertainty creates a fresh condition; the proposing agent cannot waive this rule.
-PRESERVES_CONDITION = {"loopblox/benchmarks/appworld_code.py": ("CodeEnvironment.close",)}
 TRANSIENT = _TRANSIENT_CODES | {"service_not_ready"}
 INSTRUCTIONS = (
     "You are the infrastructure repair worker, not the Loop researcher. Read /exchange/task.json "
@@ -49,9 +46,10 @@ INSTRUCTIONS = (
     "missing budget, access, permissions or an explicitly required authority outside this repair scope; "
     "difficulty or an unsuccessful fix is not an escalation reason. "
     "You may repair evidence representation and segmentation within editable_functions. The host "
-    "starts a fresh baseline and researcher whenever a repair may change inputs, outputs or protocol; "
-    "only host-approved cleanup edits preserve an existing condition. Never claim unchanged measurement "
-    "semantics merely because evidence can be reconstructed. Consult recovery-history.json for recurring "
+    "preserves completed baseline and candidate batches, notes and checkpoints after checked repairs, "
+    "and restarts unfinished batches with fresh workers and a fresh researcher. Record behavioral and "
+    "measurement changes explicitly; retained results belong to their original implementations. "
+    "Consult recovery-history.json for recurring "
     "faults and prior checked repairs: a passed check is not proof that the fault is resolved. "
     "Return exactly one JSON object with action ('repair', 'retry', or 'human'), reason, "
     "files (map of relative source path to complete replacement text), check (Python source), "
@@ -87,9 +85,7 @@ def apply_repair(original, destination, files):
         if _protected(before, EDITABLE[name]) != _protected(source, EDITABLE[name]):
             raise ValueError("Protected definitions or function signatures changed: " + name)
         if ast.dump(ast.parse(before)) != ast.dump(ast.parse(source)):
-            changed[name] = dict(before=digest(before.encode()), after=digest(source.encode()),
-                preserves_condition=_protected(before, PRESERVES_CONDITION.get(name, ())) ==
-                                    _protected(source, PRESERVES_CONDITION.get(name, ())))
+            changed[name] = dict(before=digest(before.encode()), after=digest(source.encode()))
     if not changed:
         raise ValueError("An unchanged deterministic failure is not a repair")
     shutil.copytree(original, destination)
@@ -129,7 +125,7 @@ def repair(attempt, destination, *, history, failure=None, implementation=None):
     fault_id = fingerprint(failure)
     previous_faults = [item for item in history if item.get("fingerprint") == fault_id]
     atomic_json(exchange / "task.json", dict(role="infra", editable_functions=EDITABLE,
-        preserves_condition=PRESERVES_CONDITION, fingerprint=fault_id, prior_occurrences=len(previous_faults),
+        fingerprint=fault_id, prior_occurrences=len(previous_faults),
         incident=failure, retry_codes=sorted(TRANSIENT), instruction=INSTRUCTIONS))
     record = dict(status="repairing", role="infra", source_attempt=str(attempt), fingerprint=fault_id, calls=[])
     try:
@@ -196,7 +192,7 @@ def repair(attempt, destination, *, history, failure=None, implementation=None):
                     if checked.status != "ok":
                         raise ValueError("Repair check failed: " + json.dumps(checked.result_or_error))
                     record.update(status="ready", action="repair", reason=proposal["reason"],
-                                  next_run="recover" if all(change["preserves_condition"] for change in changes.values()) else "restart",
+                                  next_run="recover",
                                   implementation=str(repaired), changes=changes, validation=checked.result_or_error)
                     return record
                 except (ValueError, SyntaxError, TypeError, KeyError, FileNotFoundError) as error:
@@ -219,7 +215,6 @@ def supervise(output):
     deadline = state["started_at"] + wall_seconds if wall_seconds is not None else None
     state["deadline_at"] = deadline
     source_attempt = output
-    restart_required = False
     process = None
     def interrupt(_signum, _frame):
         raise KeyboardInterrupt("user_stop")
@@ -259,7 +254,6 @@ def supervise(output):
                 # the last source of completed batches and cumulative task spend.
                 if (output / "evaluation/private/state.json").is_file():
                     source_attempt = output
-                    restart_required = False
             else:
                 # Preparation may fail before opening an episode. Diagnose it against the
                 # last frozen source, without treating an unfinished directory as a recovery source.
@@ -298,7 +292,6 @@ def supervise(output):
                 break
             protocol = json.loads((source_attempt / "protocol.json").read_text())
             implementation = Path(outcome.get("implementation", str(diagnostic_attempt / "private/implementation")))
-            restart_required = restart_required or outcome.get("next_run") == "restart"
             cooldown = 14 * 60 if failure.get("code") == "service_not_ready" else 60 if outcome["action"] == "retry" else 0
             until = result.get("closed_at", time.time()) + cooldown
             while time.time() < until:
@@ -306,8 +299,7 @@ def supervise(output):
             old = source_attempt
             output = control / f"attempt-{len(state['attempts']):04d}"
             old_result = json.loads((old / "result.json").read_text())
-            continuation = (["--restart-from", str(old), "--recovery-reason", outcome["reason"]] if restart_required else
-                ["--previous", str(old), "--recovery-reason", outcome["reason"]]
+            continuation = (["--previous", str(old), "--recovery-reason", outcome["reason"]]
                 if old_result["status"] in {"failed", "interrupted"} else
                 ["--continuous", "--task-count", str(len(protocol["task_ids"])), "--seed", str(protocol["seed"]),
                  "--data-root", str(old / "private/appworld"), "--appworld-venv", str(old / "private/appworld-venv")])

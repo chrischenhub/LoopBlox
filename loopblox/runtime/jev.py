@@ -9,7 +9,7 @@ import sys
 
 from loopblox import ROOT
 from loopblox.runtime.io import run_process
-from loopblox.runtime.model import HostFault, OperationalProblem, PlanningTurn, load_env
+from loopblox.runtime.model import HostFault, OperationalProblem, PlanningTurn, load_env, transient_status
 
 
 MODEL = "jev-1.13.0"
@@ -83,9 +83,8 @@ def main():
                     "model_timeout" if isinstance(error, TypeSafeAPITimeoutError) else
                     "model_transport_failure" if isinstance(error, TypeSafeAPIConnectionError) else
                     "rate_limit" if isinstance(error, TypeSafeRateLimitError) else
-                    # Includes Cloudflare origin errors (520-524) observed in front of the Jev API.
-                    "service_unavailable" if isinstance(error, TypeSafeAPIError)
-                    and error.status in {408, 500, 502, 503, 504, 520, 521, 522, 523, 524, 529}
+                    # Same status rule as the task-model gateway, including Cloudflare origin errors.
+                    "service_unavailable" if isinstance(error, TypeSafeAPIError) and transient_status(error.status)
                     else "jev_request_failed")
             result = dict(error=type(error).__name__ + ": " + str(error), code=code)
             if isinstance(error, TypeSafeAPIError):

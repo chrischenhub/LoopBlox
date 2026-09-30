@@ -21,17 +21,31 @@ _TRANSIENT_CODES = {"model_transport_failure", "rate_limit", "service_unavailabl
                     "concurrency_limit_exceeded"}
 _PROVIDER_STOP_CODES = {"service_not_ready", "daily_quota_exhausted"}
 
+
+def transient_status(status):
+    """Request timeout and server-side 5xx, including CDN origin errors such as Cloudflare 520-530.
+
+    501 Not Implemented and 505 HTTP Version Not Supported are deterministic and excluded.
+    """
+    return status == 408 or (500 <= status <= 599 and status not in {501, 505})
+
 # Trusted host transport, separate from the credential-free candidate worker.
 # The host bounds DNS, headers and body reads. Only parsed generation deltas
 # renew the process deadline when streaming; socket traffic alone never does.
 _HTTP_WORKER = '''
-import http.client, json, sys, urllib.error, urllib.request
+import http.client, json, sys, traceback, urllib.error, urllib.request
 request = json.load(sys.stdin)
 body = request.pop("body")
 timeout = request.pop("timeout")
 stream = request.pop("stream")
 def emit(value):
     print(json.dumps(value), flush=True)
+def failure(error):
+    # Every OSError here is socket I/O: DNS, connect, TLS (ssl.SSLError), resets and
+    # network-down errors, during headers or body reads. None has request effects.
+    return {"error": str(error) or type(error).__name__, "error_type": type(error).__name__,
+            "code": "model_timeout" if isinstance(error, TimeoutError) else "model_transport_failure",
+            "traceback": traceback.format_exc()[-4000:]}
 request = urllib.request.Request(**request, data=None if body is None else json.dumps(body).encode())
 try:
     with urllib.request.urlopen(request, timeout=timeout) as response:
@@ -54,9 +68,15 @@ try:
         else:
             result = {"status": response.status, "body": response.read().decode("utf-8")}
 except urllib.error.HTTPError as error:
-    result = {"status": error.code, "body": error.read().decode("utf-8", errors="replace")}
-except (TimeoutError, urllib.error.URLError, http.client.HTTPException, ConnectionError) as error:
-    result = {"error": str(error), "code": "model_timeout" if isinstance(error, TimeoutError) else "model_transport_failure"}
+    try:
+        detail = error.read().decode("utf-8", errors="replace")
+    except (OSError, http.client.HTTPException) as unreadable:
+        # The status is known even when its error body cannot be read.
+        detail = f"<unreadable error body: {type(unreadable).__name__}: {unreadable}>"
+    result = {"status": error.code, "body": detail}
+except (OSError, http.client.HTTPException, UnicodeDecodeError) as error:
+    # A truncated or corrupted body is a transport fault, not model output.
+    result = failure(error)
 emit(result)
 '''
 
@@ -577,7 +597,7 @@ class ChatCompletionsClient:
                 else:
                     code = "rate_limit"
                 raise OperationalProblem(detail[:500], code=code, effects="none", response=result)
-            if result["status"] in {408, 500, 502, 503, 504}:
+            if transient_status(result["status"]):
                 raise OperationalProblem(detail[:500], code="service_unavailable", effects="none", response=result)
             raise HostFault(f"HTTP {result['status']}: {detail[:500]}", response=result)
         try:

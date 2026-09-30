@@ -1,6 +1,7 @@
 """Build a standalone, read-only visualization of a continuous research campaign."""
 
 import argparse
+import ast
 from collections import Counter
 from datetime import datetime, timezone
 import difflib
@@ -25,28 +26,15 @@ def public_directory(path):
     raise ValueError('Expected a campaign, research/evaluation, or public evidence directory.')
 
 
-def execution_patterns(trace):
-    """Group actual root invocations at observations; preserve pattern occurrence order.
+def trace_chunks(trace):
+    """Group one trace's actual root invocations at observations, in recorded order.
 
-    A pattern is only a component/status sequence, not equivalent arguments or
-    behavior. No inferred branches, source parsing, or candidate execution.
+    A chunk is only a component/status sequence with its invocation IDs, not
+    equivalent arguments or behavior. No inferred branches, source parsing, or
+    candidate execution.
     """
-    patterns, order, pending = [], [], []
+    chunks, pending = [], []
     library = trace['library']
-
-    def record_chunk():
-        signature = [(call['component'], call['status']) for call in pending]
-        existing = next((i for i, item in enumerate(patterns) if item['sequence'] == signature), None)
-        if existing is None:
-            existing = len(patterns)
-            patterns.append(dict(sequence=signature, occurrences=[]))
-        patterns[existing]['occurrences'].append([call['id'] for call in pending])
-        if order and order[-1]['pattern'] == existing:
-            order[-1]['repeat'] += 1
-        else:
-            order.append(dict(pattern=existing, repeat=1))
-        pending.clear()
-
     for call in trace['component_calls']:
         if call['parent_id'] is not None:
             continue
@@ -54,10 +42,152 @@ def execution_patterns(trace):
         name = call['component']
         spec = library.get(name, {}) if isinstance(name, str) else {}
         if spec.get('category') == 'observation':
-            record_chunk()
+            chunks.append(pending)
+            pending = []
     if pending:
-        record_chunk()
-    return dict(patterns=patterns, order=order, trace_status=trace['status'])
+        chunks.append(pending)
+    return [(tuple((call['component'], call['status']) for call in chunk), [call['id'] for call in chunk])
+            for chunk in chunks]
+
+
+def execution_patterns(traces):
+    """Merge recorded task traces into shared patterns; keep each trace's own pattern order.
+
+    Equal chunk sequences share one pattern across tasks. Occurrences name their
+    trace index because invocation IDs are only unique within one trace.
+    """
+    patterns, index, orders = [], {}, []
+    for position, trace in enumerate(traces):
+        order = []
+        for signature, ids in trace['chunks']:
+            # Failed calls retain arbitrary JSON component names; keep that evidence
+            # while using a hashable key that distinguishes lists, objects and strings.
+            key = json.dumps(signature, sort_keys=True)
+            if key not in index:
+                index[key] = len(patterns)
+                patterns.append(dict(sequence=list(signature), occurrences=[]))
+            existing = index[key]
+            patterns[existing]['occurrences'].append([position, ids])
+            if order and order[-1]['pattern'] == existing:
+                order[-1]['repeat'] += 1
+            else:
+                order.append(dict(pattern=existing, repeat=1))
+        orders.append(order)
+    return dict(patterns=patterns, traces=[dict(task_id=trace['task_id'], path=trace['path'], status=trace['status'],
+                                                order=order) for trace, order in zip(traces, orders)])
+
+
+def _clip(text, limit=80):
+    text = ' '.join(text.split())
+    return text if len(text) <= limit else text[:limit - 1] + '…'
+
+
+def source_structure(source):
+    """Static outline of env.component calls and their enclosing control flow.
+
+    Parsed only, never executed. Statements without component or helper calls are
+    omitted, and no transitions are inferred: this shows possible call sites, not behavior.
+    """
+    try:
+        tree = ast.parse(source)
+    except SyntaxError as error:
+        return dict(error=f'Source could not be parsed: {error.msg} (line {error.lineno})')
+    helpers = {node.name for node in tree.body if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef))}
+
+    def calls(node):
+        found = []
+        for item in ast.walk(node):
+            if not isinstance(item, ast.Call):
+                continue
+            func = item.func
+            if isinstance(func, ast.Attribute) and func.attr == 'component':
+                first = (item.args[0] if item.args else
+                         next((keyword.value for keyword in item.keywords if keyword.arg == 'name'), None))
+                name = first.value if isinstance(first, ast.Constant) and isinstance(first.value, str) else None
+                found.append(dict(kind='call', component=name, line=item.lineno,
+                                  arguments=[keyword.arg or '**' for keyword in item.keywords]))
+            elif isinstance(func, ast.Name) and func.id in helpers:
+                found.append(dict(kind='helper', name=func.id, line=item.lineno))
+        return sorted(found, key=lambda item: item['line'])
+
+    def target(statement):
+        if isinstance(statement, ast.Assign) and len(statement.targets) == 1:
+            return ast.unparse(statement.targets[0])
+        return None
+
+    def block(statements):
+        items = []
+        for statement in statements:
+            if isinstance(statement, (ast.While, ast.For, ast.AsyncFor)):
+                head = (f'while {ast.unparse(statement.test)}' if isinstance(statement, ast.While)
+                        else f'for {ast.unparse(statement.target)} in {ast.unparse(statement.iter)}')
+                expression = statement.test if isinstance(statement, ast.While) else statement.iter
+                items.append(dict(kind='block', parts=[dict(label=_clip(head), calls=calls(expression),
+                                                           body=block(statement.body))]
+                                  + ([dict(label='else', body=block(statement.orelse))] if statement.orelse else [])))
+            elif isinstance(statement, ast.If):
+                parts, current, prefix = [], statement, 'if'
+                while True:
+                    parts.append(dict(label=_clip(f'{prefix} {ast.unparse(current.test)}'),
+                                      calls=calls(current.test), body=block(current.body)))
+                    if len(current.orelse) == 1 and isinstance(current.orelse[0], ast.If):
+                        current, prefix = current.orelse[0], 'elif'
+                        continue
+                    if current.orelse:
+                        parts.append(dict(label='else', body=block(current.orelse)))
+                    break
+                items.append(dict(kind='block', parts=parts))
+            elif isinstance(statement, (ast.Try, getattr(ast, 'TryStar', ast.Try))):
+                parts = [dict(label='try', body=block(statement.body))]
+                for handler in statement.handlers:
+                    label = 'except' + (f' {ast.unparse(handler.type)}' if handler.type else '')
+                    parts.append(dict(label=_clip(label + (f' as {handler.name}' if handler.name else '')),
+                                      calls=calls(handler.type) if handler.type else [],
+                                      body=block(handler.body)))
+                if statement.orelse:
+                    parts.append(dict(label='else', body=block(statement.orelse)))
+                if statement.finalbody:
+                    parts.append(dict(label='finally', body=block(statement.finalbody)))
+                items.append(dict(kind='block', parts=parts))
+            elif isinstance(statement, (ast.With, ast.AsyncWith)):
+                head = 'with ' + ', '.join(ast.unparse(item.context_expr) for item in statement.items)
+                items.append(dict(kind='block', parts=[dict(label=_clip(head),
+                    calls=[call for item in statement.items for call in calls(item.context_expr)],
+                    body=block(statement.body))]))
+            elif isinstance(statement, (ast.Return, ast.Raise, ast.Continue, ast.Break)):
+                items.extend(calls(statement))
+                items.append(dict(kind='exit', label=_clip(ast.unparse(statement))))
+            elif not isinstance(statement, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)):
+                found = calls(statement)
+                if found and target(statement):
+                    found[-1]['target'] = target(statement)
+                items.extend(found)
+        return items
+
+    return dict(functions=[dict(name=node.name, signature=_clip(f'def {node.name}({ast.unparse(node.args)})'),
+                                body=block(node.body))
+                           for node in tree.body if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef))])
+
+
+def structure_components(structure):
+    names = set()
+
+    def walk(items):
+        for item in items:
+            if item['kind'] == 'call':
+                names.add(item['component'])
+            elif item['kind'] == 'block':
+                for part in item['parts']:
+                    walk(part.get('calls', []))
+                    walk(part['body'])
+
+    for function in structure.get('functions', []):
+        walk(function['body'])
+    return names
+
+
+# Derived facts per trace path, replaced when the file changes: running traces grow.
+_TRACES = {}
 
 
 def read_campaign(public, task=None, *, include_execution=True):
@@ -75,6 +205,26 @@ def read_campaign(public, task=None, *, include_execution=True):
         provenance[str(path.relative_to(public))] = digest(raw)
         return raw.decode() if text else json.loads(raw)
 
+    def recorded_trace(evaluation, row):
+        """Status, component names and path chunks of one run's recorded trace."""
+        if row['status'] == 'not_started':
+            return None
+        relative = f'evaluations/{evaluation["evaluation_id"]}/{row["directory"]}/trace.json'
+        path = (public / relative).resolve()
+        if not path.is_relative_to(public) or not path.is_file():
+            return None
+        stat = path.stat()
+        key = (stat.st_mtime_ns, stat.st_size)
+        if _TRACES.get(path, (None,))[0] != key:
+            raw = path.read_bytes()
+            trace = json.loads(raw)
+            _TRACES[path] = (key, digest(raw), dict(
+                status=trace['status'], components={call['component'] for call in trace['component_calls']
+                                                   if isinstance(call['component'], str)},
+                chunks=trace_chunks(trace)))
+        _, provenance[relative], facts = _TRACES[path]
+        return dict(facts, task_id=row['task_id'], path=relative, finished=row['status'] != 'running')
+
     progress = read('progress.json')
     checkpoints = [read(str(p.relative_to(public))) for p in sorted((public / 'checkpoints').glob('*.json'))]
     checkpoints.sort(key=lambda c: c['iteration'])
@@ -82,7 +232,6 @@ def read_campaign(public, task=None, *, include_execution=True):
     tasks = list(dict.fromkeys(t for e in evaluations for t in e['sampled_tasks']))
     if task is not None and task not in tasks:
         raise ValueError(f'Task {task!r} is absent from the recorded evaluation plans.')
-    task = task or (tasks[0] if tasks else None)
     candidates = []
     assigned = {cid: checkpoint for checkpoint in checkpoints for cid in checkpoint['candidate_ids']}
     files = sorted((public / 'candidates').glob('*.py'))
@@ -109,16 +258,16 @@ def read_campaign(public, task=None, *, include_execution=True):
         def total(key):
             values = [r.get('agent_usage', {}).get(key) for r in attempted]
             return sum(values) if values and all(v is not None for v in values) else None
-        selected_run = next((r for r in rows if r['task_id'] == task), None)
-        path_data = None
-        trace_path = None
-        if selected_run:
-            trace_path = f'evaluations/{evaluation["evaluation_id"]}/{selected_run["directory"]}/trace.json'
-            trace = read(trace_path, optional=True) if include_execution else None
-            if trace is not None:
-                path_data = execution_patterns(trace)
         scored = sum(r.get('verification_verdict') in ('pass', 'fail') for r in rows)
+        execution = participation = None
+        if include_execution:
+            traces = [t for t in (recorded_trace(evaluation, r) for r in rows) if t is not None]
+            shown = [t for t in traces if task is None or t['task_id'] == task]
+            execution = execution_patterns(shown) if shown else None
+            finished = [t['components'] for t in traces if t['finished']]
+            participation = dict(tasks=len(finished), components=dict(Counter(n for names in finished for n in names)))
         candidates.append(dict(
+            structure=source_structure(source), participation=participation,
             id=cid, iteration=iteration, checkpoint=checkpoint, reference=reference,
             source=source, source_sha256=source_hash, rationale=metadata['rationale'],
             evaluation_id=evaluation['evaluation_id'] if evaluation else None,
@@ -131,7 +280,7 @@ def read_campaign(public, task=None, *, include_execution=True):
             agent_input_tokens=total('model_input_tokens'), agent_model_calls=total('model_calls'),
             tasks=[dict(task_id=r['task_id'], status=r['status'], verdict=r.get('verification_verdict'),
                         jev_status=r.get('jev', {}).get('status', 'not_recorded')) for r in rows],
-            execution=path_data, trace_path=trace_path))
+            execution=execution))
     candidates.sort(key=lambda c: (c['iteration'], c['id']))
     return dict(as_of=datetime.now(timezone.utc).isoformat(timespec='seconds'),
                 source=str(public), task=task, tasks=tasks, progress=progress, checkpoints=checkpoints,
@@ -173,14 +322,15 @@ def spine_and_edges(execution):
         positions.append(indices)
         for pair in zip(indices, indices[1:]):
             edges[pair] += len(pattern['occurrences'])
-    last = None
-    for row in execution['order']:
-        indices = positions[row['pattern']]
-        if last is not None:
-            edges[last, indices[0]] += 1
-        if row['repeat'] > 1:
-            edges[indices[-1], indices[0]] += row['repeat'] - 1
-        last = indices[-1]
+    for trace in execution['traces']:
+        last = None  # No transition crosses a task boundary.
+        for row in trace['order']:
+            indices = positions[row['pattern']]
+            if last is not None:
+                edges[last, indices[0]] += 1
+            if row['repeat'] > 1:
+                edges[indices[-1], indices[0]] += row['repeat'] - 1
+            last = indices[-1]
     return spine, edges
 
 
@@ -240,11 +390,15 @@ def render_execution(execution, reference, *, details_key='path-order'):
                          + (f'<small>{label(status)}</small>' if status != 'completed' else '') + '</li>')
         blocks.append(f'<div class="pattern"><header><b>P{i+1}</b><span>× {len(pattern["occurrences"])}</span></header>'
                       f'<ol class="path">{"".join(nodes)}</ol></div>')
-    order = ' <span class="arrow">→</span> '.join(
-        f'P{r["pattern"]+1}' + (f' × {r["repeat"]}' if r['repeat'] > 1 else '') for r in execution['order'])
-    return (''.join(graph) + f'<p class="trace-state">Trace: {label(execution["trace_status"])}. Numbers count observed transitions.</p>'
+    orders = '<br>'.join(f'{label(trace["task_id"])}: ' + (' <span class="arrow">→</span> '.join(
+        f'P{r["pattern"]+1}' + (f' × {r["repeat"]}' if r['repeat'] > 1 else '') for r in trace['order'])
+        or 'No component invocations yet.') for trace in execution['traces'])
+    traces = execution['traces']
+    statuses = ', '.join(f'{count} {label(status)}' for status, count in Counter(t['status'] for t in traces).items())
+    return (''.join(graph) + f'<p class="trace-state">{len(traces)} recorded trace{"" if len(traces) == 1 else "s"}: {statuses}. '
+            'Numbers count observed transitions within tasks.</p>'
             + f'<details data-key="{label(details_key)}"><summary>Exact path order</summary><div class="patterns">' + ''.join(blocks) + '</div>'
-            + f'<p class="path-order">{order or "No component invocations yet."}</p></details>')
+            + f'<p class="path-order">{orders}</p></details>')
 
 
 def candidate_status(c, incumbent):
@@ -317,13 +471,86 @@ def render_candidate_summary(data):
             f'<th>Selection</th></tr></thead><tbody>{"".join(rows)}</tbody></table></div>')
 
 
+def render_structure(c, previous):
+    """Static call sites from source, overlaid only with recorded per-name participation."""
+    structure = c['structure']
+    if 'error' in structure:
+        return f'<p class="structure-note">{label(structure["error"])}</p>'
+    participation = c.get('participation') or dict(tasks=0, components={})
+    recorded = participation['tasks']
+    earlier = structure_components(previous['structure']) if previous and 'error' not in previous['structure'] else None
+
+    def call(item):
+        if item['kind'] == 'helper':
+            return f'<li class="st-call helper"><span class="st-name">{label(item["name"])}()</span><span class="st-meta">helper call</span></li>'
+        name = item['component']
+        count = participation['components'].get(name, 0) if name is not None else None
+        classes = ['st-call']
+        if recorded and count == 0:
+            classes.append('unexecuted')
+        if name is not None and earlier is not None and None not in earlier and name not in earlier:
+            classes.append('added')
+        arguments = f'({", ".join(label(a) for a in item["arguments"])})'
+        target = f'<span class="st-target">→ {label(item["target"])}</span>' if item.get('target') else ''
+        meta = ('participation unknown' if name is None else
+                f'{count}/{recorded} tasks' if recorded else 'no finished runs yet')
+        return (f'<li class="{" ".join(classes)}"><span class="st-name">{label(name if name is not None else "<dynamic>")}</span>'
+                f'<span class="st-args">{arguments}</span>{target}<span class="st-meta">{meta}</span></li>')
+
+    def items(body):
+        rows = []
+        for item in body:
+            if item['kind'] in ('call', 'helper'):
+                rows.append(call(item))
+            elif item['kind'] == 'exit':
+                rows.append(f'<li class="st-exit">{label(item["label"])}</li>')
+            else:
+                rows.append('<li class="st-block">' + ''.join(
+                    f'<div class="st-head">{label(part["label"])}</div>'
+                    + (f'<div class="st-meta">Control expression</div><ol class="st-body">{items(part["calls"])}</ol>'
+                       if part.get('calls') else '')
+                    + f'<ol class="st-body">{items(part["body"]) or "<li class=st-empty>no component calls in body</li>"}</ol>'
+                    for part in item['parts']) + '</li>')
+        return ''.join(rows)
+
+    functions = ''.join(f'<div class="st-function"><div class="st-head st-def">{label(function["signature"])}</div>'
+                        f'<ol class="st-body">{items(function["body"]) or "<li class=st-empty>no component calls</li>"}</ol></div>'
+                        for function in structure['functions'])
+    note = ('Parsed from source, not recorded behavior: call sites and enclosing control flow only; statements '
+            'without component calls are omitted and no transitions are inferred. ')
+    note += (f'Counts give how many of this Loop\'s {recorded} finished tasks invoked each component, per component '
+             'name rather than per call site; dashed components were never invoked. ' if recorded else
+             'No finished runs of this Loop are recorded yet. ')
+    note += 'Dynamic names have unknown participation and are not compared. '
+    if earlier is not None and None not in earlier:
+        note += f'Amber marks names absent from {previous["id"]}\'s static outline.'
+    return f'<p class="structure-note">{label(note)}</p><div class="structure">{functions or "<p class=structure-note>No functions defined.</p>"}</div>'
+
+
+def render_source(candidate, previous):
+    source = candidate['source']
+    if previous is None:
+        return f'<pre>{label(source)}</pre>'
+    lines = source.splitlines(keepends=True)
+    parts = []
+    for operation, _, _, start, end in difflib.SequenceMatcher(
+            a=previous['source'].splitlines(keepends=True), b=lines, autojunk=False).get_opcodes():
+        for line in lines[start:end]:
+            text = label(line)
+            parts.append(f'<mark class="source-added">{text}</mark>'
+                         if operation in ('insert', 'replace') else text)
+    note = (f'Green marks added or modified lines versus {previous["id"]}, the round-start incumbent. '
+            'Removed lines appear in Source changes.')
+    return f'<p class="source-note">{label(note)}</p><pre>{"".join(parts)}</pre>'
+
+
 def render_candidate_cards(data):
     """Render the same recorded Loop evidence for live and standalone views."""
     indexed = {c['id']: c for c in data['candidates']}
     cards = []
     for c in data['candidates']:
         key = label(c['id'])
-        task_key = label(f'task-{data["task"]}:{c["id"]}')
+        task_key = label(f'task-{data["task"] or "all"}:{c["id"]}')
         previous = indexed.get(c['reference'])
         stage = 'Baseline' if c['iteration'] == 0 else f'Round {c["iteration"]:02d}'
         incumbent = data['progress'].get('incumbent')
@@ -349,7 +576,7 @@ def render_candidate_cards(data):
                             f'<td>{label(t["status"])}</td><td>{label(t["jev_status"])}</td></tr>' for t in c['tasks'])
         counts = Counter(str(name) for p in (c['execution'] or {}).get('patterns', [])
                          for occurrence in p['occurrences'] for name, _ in p['sequence'])
-        invocation_counts = ', '.join(f'{label(name)} × {count}' for name, count in counts.items()) or 'No recorded calls for the displayed task.'
+        invocation_counts = ', '.join(f'{label(name)} × {count}' for name, count in counts.items()) or 'No recorded calls yet.'
         compared = compared_with(c, previous)
         if compared is not None:
             difference, share = compared
@@ -365,11 +592,12 @@ def render_candidate_cards(data):
 <div class="score-row"><strong>{score}</strong><span>{label(status)}</span></div>{f'<p class="score-note">{score_note}</p>' if not c['feedback_ready'] else ''}{render_task_dots(c)}
 <dl class="cost"><div><dt>Agent input tokens</dt><dd>{number(c['agent_input_tokens'])}</dd></div><div><dt>Model attempts</dt><dd>{number(c['agent_model_calls'])}</dd></div></dl></div></header>
 <details class="candidate-body" data-key="{key}:body"{' open' if expanded else ''}><summary>Recorded path, hypothesis and source</summary>
-<section class="path-section">{render_execution(c['execution'], previous['execution'] if previous else None, details_key=f'task-{data["task"]}:{c["id"]}:path-order')}</section>
-<section class="description"><div><h3>Hypothesis <small>researcher rationale</small></h3><p>{label(excerpt)}</p>
-<details data-key="{key}:rationale"><summary>Full rationale</summary><pre>{label(c['rationale'])}</pre></details></div><div><h3>Observed <small>evaluation results</small></h3><p>{label(observed)}</p>
-<details data-key="{task_key}:invocation-counts"><summary>Invocation counts · displayed task</summary><p class="observed-counts">{invocation_counts}</p></details></div></section>
-<div class="candidate-details"><details data-key="{key}:source"><summary>Python source</summary><pre>{label(c['source'])}</pre></details>
+<section class="path-section">{render_execution(c['execution'], previous['execution'] if previous else None, details_key=f'task-{data["task"] or "all"}:{c["id"]}:path-order')}</section>
+<section class="description"><div><h3>Hypothesis <small>researcher rationale</small></h3><p>{label(excerpt)}</p></div><div><h3>Observed <small>evaluation results</small></h3><p>{label(observed)}</p>
+<details data-key="{task_key}:invocation-counts"><summary>Invocation counts · {label(data['task'] or 'all tasks')}</summary><p class="observed-counts">{invocation_counts}</p></details></div></section>
+<div class="candidate-details"><details data-key="{key}:rationale"><summary>Full rationale</summary><pre class="wrap">{label(c['rationale'])}</pre></details>
+<details data-key="{key}:source"><summary>Python source</summary>{render_source(c, previous)}</details>
+<details data-key="{key}:structure"><summary>Static source structure</summary>{render_structure(c, previous)}</details>
 {f'<details data-key="{key}:diff"><summary>Source changes</summary><pre>{label(diff or "No source difference.")}</pre></details>' if previous else ''}
 <details data-key="{key}:outcomes"><summary>Task outcomes</summary><div class="table-scroll"><table><thead><tr><th>Task</th><th>Official score</th><th>Execution</th><th>Jev</th></tr></thead><tbody>{task_rows}</tbody></table></div></details></div></details></article>''')
     if not cards:
@@ -385,7 +613,7 @@ def render_report(data):
     facts = json.dumps(data, indent=2, ensure_ascii=False)
     values = {
         '__TITLE__': label(Path(data['source']).parents[1].name), '__DATE__': label(data['as_of']),
-        '__STATUS__': label(data['progress']['status']), '__TASK__': label(data['task'] or 'Not recorded yet'),
+        '__STATUS__': label(data['progress']['status']), '__TASK__': label(data['task'] or 'All tasks'),
         '__RAIL__': ''.join(rail) or '<li>No completed checkpoints yet.</li>',
         '__CARDS__': render_candidate_cards(data),
         '__NOTES__': notes, '__FACTS__': label(facts),
@@ -397,7 +625,7 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('campaign', type=Path, help='Campaign, research/evaluation, or public evidence directory')
     parser.add_argument('--output', type=Path, required=True, help='Standalone HTML outside the campaign directory')
-    parser.add_argument('--task', help='Task whose actual paths appear in every candidate card; defaults to the first frozen task')
+    parser.add_argument('--task', help='Show only this task\'s actual paths in every candidate card; defaults to all recorded tasks')
     args = parser.parse_args()
     try:
         public, protected = public_directory(args.campaign)
@@ -410,7 +638,7 @@ def main():
         atomic_text(output, render_report(data))
     except (ValueError, KeyError, OSError) as error:
         parser.exit(2, f'Cannot visualize this campaign: {error}\n')
-    print(f'Wrote {output} ({len(data["candidates"])} candidates; task {data["task"]}).')
+    print(f'Wrote {output} ({len(data["candidates"])} candidates; paths: {data["task"] or "all tasks"}).')
 
 
 PAGE_TEMPLATE = r'''
@@ -522,6 +750,25 @@ p { color:var(--muted); }
 details { border-top:1px solid var(--line); padding:10px 0; }
 summary { cursor:pointer; color:var(--green); font:12px/1.6 var(--mono); }
 pre { white-space:pre-wrap; overflow-wrap:anywhere; font:11px/1.7 var(--mono); background:#0f1a13; padding:14px; max-height:560px; overflow:auto; color:var(--muted); }
+.source-added { background:#1e4935; color:#b7f5cd; box-decoration-break:clone; -webkit-box-decoration-break:clone; }
+.source-note, .structure-note { font:11px/1.7 var(--mono); color:var(--muted); margin:10px 0 12px; }
+.structure { background:#0f1a13; padding:14px; overflow-x:auto; font:11px/1.6 var(--mono); }
+.structure ol { list-style:none; margin:0; padding:0; }
+.st-function + .st-function { margin-top:16px; }
+.st-head { color:var(--green); padding:2px 0; }
+.st-def { color:var(--text); }
+.structure .st-body { display:grid; gap:6px; margin:2px 0 6px 6px; padding-left:14px; border-left:1px solid var(--line); }
+.st-block { display:grid; gap:2px; }
+.st-call { display:flex; flex-wrap:wrap; align-items:baseline; gap:2px 8px; width:fit-content; max-width:100%; border:1px solid #4d6657; background:#203127; padding:4px 10px; }
+.st-call.unexecuted { border-style:dashed; background:transparent; }
+.st-call.added { border-color:var(--amber); }
+.st-call.added:not(.unexecuted) { background:#302b20; }
+.st-call.added .st-name { color:var(--amber); }
+.st-name { color:var(--text); }
+.st-args, .st-target, .st-meta, .st-exit, .st-empty { color:var(--muted); }
+.st-meta { font-size:10px; }
+.st-exit::before { content:'↳ '; }
+.st-empty { font-style:italic; }
 .table-scroll { overflow:auto; }
 table { border-collapse:collapse; font:11px/1.6 var(--mono); width:100%; }
 th,td { padding:8px; text-align:left; border-bottom:1px solid var(--line); white-space:nowrap; }
@@ -536,11 +783,11 @@ footer { margin-top:30px; border-top:1px solid var(--line); padding-top:18px; fo
 </style>
 <main>
 <header><span class="eyebrow">LoopBlox / research visualization</span><h1>Watch the Loop evolve.</h1><p class="intro">Saved candidates, recorded execution paths, and the evidence behind each selection.</p></header>
-<div class="meta"><span>__TITLE__</span><span>Campaign: __STATUS__</span><span>Snapshot: __DATE__</span><span>Path example: __TASK__</span></div>
+<div class="meta"><span>__TITLE__</span><span>Campaign: __STATUS__</span><span>Snapshot: __DATE__</span><span>Paths: __TASK__</span></div>
 <section aria-label="Incumbent history"><span class="eyebrow">Best Loop at each completed round</span><ol class="rail">__RAIL__</ol></section>
-<p class="legend">Each card diagrams recorded transitions on the same task; line weight follows the recorded count. <strong>Amber marks components and transitions absent from the comparison trace.</strong> Lines show observed routes, with transition counts; they do not infer source-code conditions. Exact path order is available below each diagram.</p>
+<p class="legend">Each card merges recorded transitions from every task in that Loop’s evaluation, or from one task selected with --task; line weight follows the recorded count and no transition crosses a task boundary. <strong>Amber marks components and transitions absent from the comparison Loop’s paths.</strong> Lines show observed routes, with transition counts; they do not infer source-code conditions. Exact path order is available below each diagram.</p>
 <div class="cards">__CARDS__</div>
-<p class="footnote">Scores and costs cover each candidate’s recorded evaluation; diagrams and invocation counts cover only the displayed task. Agent costs exclude simulated users, post-run Jev and researcher usage. Unknown usage stays unknown. Incomplete batches cannot establish a new best Loop. Selection comes from host records. Researcher hypotheses and notes are claims; invocation counts and differences between runs do not establish causality. Recovery attempts are outside these per-candidate totals.</p>
+<p class="footnote">Scores and costs cover each candidate’s recorded evaluation; diagrams and invocation counts cover the displayed tasks. Agent costs exclude simulated users, post-run Jev and researcher usage. Unknown usage stays unknown. Incomplete batches cannot establish a new best Loop. Selection comes from host records. Researcher hypotheses and notes are claims; invocation counts and differences between runs do not establish causality. Recovery attempts are outside these per-candidate totals.</p>
 <section class="notes"><h2>Research notes</h2>__NOTES__</section>
 <details><summary>Snapshot data and source hashes</summary><pre>__FACTS__</pre></details>
 <footer>Read-only local report · regenerate to update · no model calls or task execution</footer>

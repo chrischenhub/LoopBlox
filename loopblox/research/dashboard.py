@@ -113,12 +113,9 @@ def campaign_name(root):
     return root.name
 
 
-def supervision(root):
-    """Project the supervisor onto its current evidence, including preparation gaps."""
+def supervision_attempts(root, state):
+    """Resolve only the attempt directories owned by this supervisor."""
     control = supervision_directory(root)
-    state = read_json(control / 'state.json', optional=True)
-    if not state:
-        return None
     original = control.with_name(control.name.removesuffix('-supervision'))
 
     def attempt_path(value):
@@ -130,11 +127,21 @@ def supervision(root):
             raise ValueError('Supervisor attempt points outside its campaign.')
         return path
 
-    current = attempt_path(state['attempt'])
+    return [attempt_path(value) for value in
+            [str(original), *(item['directory'] for item in state['attempts']), state['attempt']]]
+
+
+def supervision(root):
+    """Project the supervisor onto its current evidence, including preparation gaps."""
+    control = supervision_directory(root)
+    state = read_json(control / 'state.json', optional=True)
+    if not state:
+        return None
+    attempts = supervision_attempts(root, state)
+    original, current = attempts[0], attempts[-1]
     # Preparation can precede protocol/result creation. Show the last saved
     # attempt's evidence while identifying the next attempt separately.
-    attempts = [current, *(attempt_path(item['directory']) for item in reversed(state['attempts']))]
-    displayed = next((p for p in attempts if (p / 'protocol.json').is_file() and (p / 'result.json').is_file()), None)
+    displayed = next((p for p in reversed(attempts) if (p / 'protocol.json').is_file() and (p / 'result.json').is_file()), None)
     if displayed != root:
         return None
     alive = process_alive(state.get('supervisor_pid'),
@@ -293,7 +300,7 @@ def snapshot(root, task=None, *, view='dashboard', candidate=None, run=None):
         completed_iterations=progress.get('completed_iterations', 0), incumbent=progress.get('incumbent'),
         pending_candidates=progress.get('pending_candidates', []), task_runs_this_attempt=progress.get('task_runs_this_attempt', 0),
         last_activity_at=activity, error=result.get('error'),
-        recovery_from=(protocol.get('prior_attempt') or {}).get('directory') or protocol.get('recovery', {}).get('previous')),
+        recovery_from=(protocol.get('restart_from') or protocol.get('prior_attempt') or {}).get('directory') or protocol.get('recovery', {}).get('previous')),
         evaluation=evaluation, candidates=candidates, checkpoints=checkpoints,
         visualization=(None if view != 'dashboard' else
                        dict(task=loops['task'], tasks=loops['tasks'], html=render_candidate_cards(loops))),
@@ -335,6 +342,7 @@ class DashboardServer(ThreadingHTTPServer):
         if key not in self.closed_snapshots or supervised:
             data = snapshot(root, task, view=view, candidate=candidate, run=run)
             data['campaign']['id'] = self.campaign_id(root)
+            data['attempt_history'] = self.attempt_history(root) if supervised else []
             # Closed campaign records are immutable. Avoid repeatedly reading large
             # recovery ledgers; never cache an incomplete accounting projection.
             if data['campaign']['closed'] and not data['warnings'] and not supervised:
@@ -344,6 +352,33 @@ class DashboardServer(ThreadingHTTPServer):
 
     def campaign_id(self, root):
         return root.name if self.single else root.relative_to(self.path).as_posix()
+
+    def attempt_history(self, root):
+        state = read_json(supervision_directory(root) / 'state.json')
+        attempts = supervision_attempts(root, state)
+        if root not in attempts:
+            return []
+        history = []
+        for attempt in dict.fromkeys(attempts):
+            # A monitor explicitly scoped to one campaign cannot navigate outside it.
+            if (self.single and attempt != self.single) or (not self.single and not attempt.is_relative_to(self.path)):
+                continue
+            protocol = read_json(attempt / 'protocol.json', optional=True)
+            result = read_json(attempt / 'result.json', optional=True)
+            session = session_directory(protocol)
+            if session is None or not result:
+                continue  # Preparation may not have produced a viewable attempt yet.
+            public = attempt / session / 'public'
+            progress = read_json(public / 'progress.json', optional=True)
+            transition = ('restart' if protocol.get('restart_from') else
+                          'recovery' if protocol.get('prior_attempt') or protocol.get('recovery') else
+                          'original' if attempt == attempts[0] else 'attempt')
+            history.append(dict(id=self.campaign_id(attempt), name=campaign_name(attempt),
+                status=result['status'], transition=transition, current=attempt == attempts[-1],
+                task_runs=progress.get('task_runs_this_attempt'),
+                candidates=len(list((public / 'candidates').glob('*.py'))) if progress else None,
+                completed_iterations=progress.get('completed_iterations')))
+        return history
 
     def campaigns(self):
         campaigns, warnings = [], []

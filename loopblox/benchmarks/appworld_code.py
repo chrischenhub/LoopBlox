@@ -165,8 +165,16 @@ class CodeEnvironment:
                     receipt["api_calls"].append(call)
                     self.api_count += 1
                     atomic_json(path, receipt)
-                    result = self.environment.request(dict(operation="call", call=message["api"]),
-                        max(0.001, min(100, deadline - time.monotonic())))
+                    api = message["api"]
+                    if (not isinstance(api, dict)
+                            or not isinstance(api.get("app_name"), str)
+                            or not isinstance(api.get("api_name"), str)
+                            or not isinstance(api.get("arguments"), dict)):
+                        result = dict(status="failed", effects="none", result=dict(
+                            message="Unknown public API or unsupported parameters; consult api_docs."))
+                    else:
+                        result = self.environment.request(dict(operation="call", call=api),
+                            max(0.001, min(100, deadline - time.monotonic())))
                     call.update(result)
                     atomic_json(path, receipt)
                     self.send(result)

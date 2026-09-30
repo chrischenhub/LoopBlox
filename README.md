@@ -104,7 +104,7 @@ the repository root:
 python3 -B -m loopblox.research.dashboard
 ```
 
-Open [http://127.0.0.1:8767/](http://127.0.0.1:8767/). It refreshes every three seconds, discovers campaigns in `.artifacts/appworld/` and `.artifacts/tau2/`, and follows the newest confirmed live experiment. When none is detected, it says so and shows the latest recorded campaign. All tabs identify the selected benchmark, frozen task count and task interface. The page combines live task progress, official scores, Jev analysis and usage with the generic Loop visualizer: candidate comparisons, Python source and differences, and actual execution paths. Select one task to compare across all Loops, or select a campaign to keep watching that attempt. The dashboard reads existing records without making model calls or changing the experiment. See the [live dashboard guide](docs/running.md#live-research-dashboard) for options and accounting.
+Open [http://127.0.0.1:8767/](http://127.0.0.1:8767/). It refreshes every three seconds, discovers campaigns in `.artifacts/appworld/` and `.artifacts/tau2/`, and follows the newest confirmed live experiment. When none is detected, it says so and shows the latest recorded campaign. All tabs identify the selected benchmark, frozen task count and task interface. The page combines live task progress, official scores, Jev analysis and usage with the generic Loop visualizer: candidate comparisons, Python source and differences, and actual execution paths merged across all tasks. Select one task to compare only that task across Loops, or select a campaign to keep watching that attempt. The dashboard reads existing records without making model calls or changing the experiment. See the [live dashboard guide](docs/running.md#live-research-dashboard) for options and accounting.
 
 The **Research** tab summarizes the selected campaign's candidate evolution,
 recorded findings and research notes, including post-run Jev coverage and optional
@@ -120,7 +120,7 @@ python3 -B -m loopblox.research.visualize .artifacts/appworld/research-NEW/evalu
   --output .artifacts/visualizations/research-NEW.html
 ```
 
-Open the HTML in a browser to compare Loop versions, read source changes, and inspect one task's recorded component calls. The report also shows evaluation scores and agent model usage. Run the command again to refresh it as research progresses; generating a report makes no model calls. The [visualization guide](docs/running.md#visualize-a-research-campaign) covers task selection and accounting.
+Open the HTML in a browser to compare Loop versions, read source changes, and inspect recorded component paths across all tasks. The report also shows evaluation scores and agent model usage. Run the command again to refresh it as research progresses; generating a report makes no model calls. The [visualization guide](docs/running.md#visualize-a-research-campaign) covers task selection and accounting.
 
 ## Try the local playground
 

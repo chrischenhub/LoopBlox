@@ -316,14 +316,16 @@ repair spend is retained separately. Jev v11 retains the v10 fallback that split
 single-cycle evidence; retain parent failures and account for leaf measurements
 without double counting. Never use Jev as a prerequisite for routing its own failure.
 
-For the current unattended AppWorld reliability test, a checked repair that may
-change participant inputs, outputs, feedback, segmentation or request policy starts
-a new condition automatically: fresh baseline, candidates, labels, checkpoints and
-researcher conversation. No per-change human confirmation is required within the
-approved repair scope. The host owns this decision; only explicit cleanup-only
-edits may preserve a condition, and uncertainty means restart. Preserve repaired
-infra and operational provenance, but import no prior research evidence. A known
-recurring fault cannot use an unchanged restart or repeat an already failed repair.
+For the current unattended AppWorld reliability test, checked infrastructure
+repairs preserve completed baseline and candidate batches, the incumbent, notes
+and checkpoints. Restart unfinished batches with fresh workers and a fresh
+researcher, retaining prior spend and the original wall deadline. No automatic
+fresh baseline is required solely because a repair changes participant inputs,
+outputs, feedback, segmentation or request handling. Record those changes and
+retain each result's original implementation provenance; do not claim unchanged
+measurement conditions. No per-change confirmation is required within the approved
+repair scope. Models, budgets, scoring, questions and task data remain protected.
+A known recurring fault cannot use an unchanged restart or repeat a failed repair.
 Internal cancellation must not become a user stop; cleanup preserves original
 faults and usage. Online Judge input rejection is a catchable candidate error;
 post-run Jev input rejection is an infra fault.

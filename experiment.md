@@ -1,6 +1,6 @@
 # Continuous RSI experiment
 
-Current research protocol, September 27, 2026. Improve reusable Python Loops on
+Current research protocol, September 28, 2026. Improve reusable Python Loops on
 36 frozen official AppWorld training tasks. The user authorized a fresh start,
 native code execution and continuous research with no fixed stopping round. The
 September 24 revision switches task agents to FreeInference with a 60-second
@@ -9,8 +9,10 @@ and are not imported as research evidence. The September 25 revision adds automa
 fault routing, isolated infrastructure repair, oversized Jev segment recovery and
 a streaming generation-inactivity timeout in place of the whole-request deadline
 for newly frozen implementations. The current objective is prolonged unattended
-AppWorld RSI and automatic failure recovery. Changes to inputs, outputs or protocol
-automatically start a new condition rather than mix research evidence.
+AppWorld RSI and automatic failure recovery. The September 28 revision preserves
+completed research after checked infrastructure repairs instead of automatically
+rerunning the baseline. Each retained result keeps its original implementation
+provenance; repairs and any behavioral or measurement changes must be disclosed.
 Telecom research remains stopped. Historical protocols and trial artifacts retain
 their exact implementations and evidence in the local archive.
 
@@ -130,11 +132,11 @@ candidate Loops. Repairs are restricted to the function bodies owned by
 fixed. Checks run without network, credentials, benchmark execution or private
 evaluator data. Rejected proposals return to the worker with their check results.
 A passing check permits a new frozen implementation, never an edit to an existing
-attempt or the operator's checkout. The host compares changed function bodies
-against `PRESERVES_CONDITION` in the same module. Only explicitly allowed cleanup
-edits recover the same condition; all other changes, including uncertain ones,
-start from a fresh baseline and researcher without imported research evidence.
-The repair worker cannot override this classification. Missing authority to
+attempt or the operator's checkout. Checked repairs use the existing recovery path,
+preserving completed baseline and candidate batches, notes and checkpoints.
+Changes to execution, feedback or measurement are recorded with the new
+implementation; retained evidence is not relabeled as measured under that repair.
+A fresh baseline is not required solely because infrastructure was repaired. Missing authority to
 repair outside this scope requires human input. A model's repair and check are not
 proof of correctness; the recovered attempt retains any subsequent failure.
 If the repair worker itself cannot start, or repeatedly fails before returning a
@@ -172,7 +174,11 @@ starts a new condition; ordinary recovery requires identical frozen transport
 settings and retry policy. A recognized no-effect timeout or other transient
 fault retries the exact request with exponential backoff (two seconds doubling to
 at most 120; concurrency-limit retries wait at least sixty), while each retry
-starts within 20 minutes of the first failure and budgets permit. Failed
+starts within 20 minutes of the first failure and budgets permit. Transient
+transport faults are request timeouts, DNS, connection, TLS (`ssl.SSLError`) and
+network-down errors or truncated/undecodable bodies during header or body reads,
+429, HTTP 408 and every 5xx except 501 and 505; the task-model provider is behind
+Cloudflare, whose 520–530 origin errors are included. Failed
 attempts and unknown usage remain recorded. Timeout request and retry-wait durations are
 excluded from charged time under the existing gateway contract. Exhaustion routes
 the original operational fault to infra diagnosis. Provider capacities and quotas
@@ -227,14 +233,15 @@ failure requires diagnosis and a new frozen output directory before recovery.
 The infra worker may request an unchanged retry only for host-recognized transient
 codes on their first occurrence, with a sixty-second cooldown (fourteen minutes for `service_not_ready`).
 Deterministic faults require a changed, checked implementation.
-For cleanup-only recovery, keep completed batches, sources and checkpoints
-unchanged and restart only unfinished batches with fresh workers and a fresh
-researcher. For an input/output or protocol change, use `--restart-from`: preserve
-the same official tasks, models, budgets and isolation images, but run a new
-baseline with no imported candidates, labels, notes or checkpoints. The new
-implementation includes accumulated repairs; `restart_from` records provenance
-without carrying prior research into the new condition. Retain failed attempts privately for cumulative accounting, not as
-research feedback. Record and freeze any justified repair and its provenance.
+After a checked repair, use `--previous` to preserve completed batches, candidate
+sources, the incumbent, notes and checkpoints. Restart only unfinished batches
+with fresh workers and a fresh researcher; an unfinished opening baseline still
+needs completion. Retain failed attempts privately for cumulative accounting, not
+as research feedback. Record and freeze the repair, its behavioral or measurement
+changes and its provenance. Retained results remain observations of their original
+implementations, so comparisons across repairs must disclose that difference.
+The supervisor retains the original wall deadline. `--restart-from` remains an
+explicit fresh-start option, not an automatic infrastructure-repair policy.
 All existing spend remains recorded; this condition's null budgets impose no
 finite remaining allowance. Do not reinterpret an ordinary task failure or a user
 stop as an infrastructure fault. A recorded `service_not_ready` failure requires
